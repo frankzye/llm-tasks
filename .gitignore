@@ -9,3 +9,7 @@ __pycache__/
 uv.lock
 .python-version
 .env
+node_modules
+.next
+.data
+.env.local
