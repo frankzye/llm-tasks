@@ -19,7 +19,7 @@ export function createAgentsThreadListAdapter(): unstable_RemoteThreadListAdapte
         })),
       };
     },
-    async initialize() {
+    async initialize(_threadId) {
       const r = await fetch("/api/agents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -48,5 +48,16 @@ export function createAgentsThreadListAdapter(): unstable_RemoteThreadListAdapte
       });
     },
     generateTitle: async () => new ReadableStream(),
+    async fetch(threadId) {
+      const r = await fetch(`/api/agents/${encodeURIComponent(threadId)}`);
+      if (!r.ok) throw new Error(`agent fetch failed: ${r.status}`);
+      const a = (await r.json()) as AgentRow;
+      return {
+        status: "regular" as const,
+        remoteId: a.id,
+        externalId: a.id,
+        title: a.name,
+      };
+    },
   };
 }

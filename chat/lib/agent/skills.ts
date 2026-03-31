@@ -1,6 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import {
+  assignSkillMdIds,
+  parseSkillMdFrontmatter,
+  type SkillsCatalogFile,
+} from "./skills-catalog";
+
 export type SkillRecord = {
   id: string;
   title: string;
@@ -105,13 +111,44 @@ async function collectMarkdownPaths(rootDir: string): Promise<string[]> {
 export async function loadSkillsFromDisk(skillsDir: string): Promise<SkillRecord[]> {
   const mdPaths = await collectMarkdownPaths(skillsDir);
   const out: SkillRecord[] = [];
+  const skillMdEntries: Array<{ full: string; rel: string; raw: string }> = [];
+
   for (const full of mdPaths) {
+    const base = path.basename(full);
+    if (/^SKILL\.md$/i.test(base)) {
+      const raw = await fs.readFile(full, "utf8");
+      const rel = path.relative(skillsDir, full).replace(/\\/g, "/");
+      skillMdEntries.push({ full, rel, raw });
+    }
+  }
+
+  const idByRel = assignSkillMdIds(
+    skillMdEntries.map(({ rel, raw }) => ({ rel, raw })),
+  );
+
+  for (const { rel, raw } of skillMdEntries) {
+    const fm = parseSkillMdFrontmatter(raw);
+    const id = idByRel.get(rel)!;
+    const titleMatch = fm.body.match(/^#\s+(.+)$/m);
+    const title = titleMatch?.[1]?.trim() ?? fm.name?.trim() ?? id;
+    const body = fm.body;
+    const tagLine = fm.body.match(/^tags:\s*(.+)$/m)?.[1] ?? "";
+    const tags = tagLine
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const tokens = tokenize(
+      `${id} ${title} ${fm.description ?? ""} ${tags.join(" ")} ${body}`,
+    );
+    out.push({ id, title, body, tags, tokens });
+  }
+
+  const skillMdFull = new Set(skillMdEntries.map((e) => e.full));
+  for (const full of mdPaths) {
+    if (skillMdFull.has(full)) continue;
     const raw = await fs.readFile(full, "utf8");
-    const rel = path.relative(skillsDir, full);
-    const id = rel
-      .replace(/\\/g, "/")
-      .replace(/\.md$/i, "")
-      .replace(/\//g, "__");
+    const rel = path.relative(skillsDir, full).replace(/\\/g, "/");
+    const id = rel.replace(/\.md$/i, "").replace(/\//g, "__");
     const titleMatch = raw.match(/^#\s+(.+)$/m);
     const title = titleMatch?.[1]?.trim() ?? id;
     const tagLine = raw.match(/^tags:\s*(.+)$/m)?.[1] ?? "";
@@ -168,6 +205,88 @@ export function searchSkillsHybrid(
 
 export function getSkillById(skills: SkillRecord[], id: string): SkillRecord | undefined {
   return skills.find((s) => s.id === id);
+}
+
+/** When `enabledSkillIds` is null or undefined, all catalog skills are allowed. When an array (possibly empty), only those ids in the catalog set are kept; skills not in `catalogIds` (e.g. agent-local) are always kept. */
+export function filterSkillsForCatalog(
+  skills: SkillRecord[],
+  catalogIds: Set<string>,
+  enabledSkillIds: string[] | null | undefined,
+): SkillRecord[] {
+  if (enabledSkillIds == null) {
+    return skills;
+  }
+  const allow = new Set(enabledSkillIds);
+  return skills.filter((s) => {
+    if (!catalogIds.has(s.id)) return true;
+    return allow.has(s.id);
+  });
+}
+
+function firstParagraphSnippet(body: string, maxChars: number): string {
+  const stripped = body.replace(/^---[\s\S]*?---\s*/, "").trim();
+  const chunk = (stripped.split(/\n\n+/)[0] ?? stripped).replace(/\s+/g, " ").trim();
+  if (chunk.length <= maxChars) return chunk;
+  return `${chunk.slice(0, Math.max(0, maxChars - 1))}…`;
+}
+
+function compactText(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Compact inventory for the system prompt as minified JSON.
+ * Includes exact `skillId` plus `name` + `description` (catalog description preferred; else first paragraph).
+ */
+export function formatSkillsInventoryForSystem(
+  skills: SkillRecord[],
+  catalog: SkillsCatalogFile | null,
+  options?: { maxSkills?: number; maxDescChars?: number; maxTotalChars?: number },
+): string {
+  const maxSkills = options?.maxSkills ?? 100;
+  const maxDescChars = options?.maxDescChars ?? 280;
+  const maxTotalChars = options?.maxTotalChars ?? 14_000;
+
+  const byId = new Map<string, { name: string; description: string }>();
+  if (catalog?.skills) {
+    for (const e of catalog.skills) {
+      byId.set(e.id, { name: e.name, description: e.description ?? "" });
+    }
+  }
+
+  const sorted = [...skills].sort((a, b) => a.id.localeCompare(b.id));
+  const items: Array<{ skillId: string; name: string; description: string }> = [];
+
+  for (const s of sorted) {
+    if (items.length >= maxSkills) break;
+    const meta = byId.get(s.id);
+    const name = compactText(meta?.name ?? s.title) || s.id;
+    let description = compactText(meta?.description ?? "");
+    if (!description) {
+      description = compactText(firstParagraphSnippet(s.body, maxDescChars));
+    } else if (description.length > maxDescChars) {
+      description = `${description.slice(0, Math.max(0, maxDescChars - 1))}…`;
+    }
+    items.push({ skillId: s.id, name, description });
+  }
+
+  // Minified JSON (no spaces/newlines) to reduce tokens.
+  // If it exceeds budget, drop tail items until it fits.
+  const base = { skills: items };
+  let json = JSON.stringify(base);
+  if (json.length > maxTotalChars) {
+    const trimmed: typeof items = [];
+    for (const it of items) {
+      trimmed.push(it);
+      const candidate = JSON.stringify({ skills: trimmed });
+      if (candidate.length > maxTotalChars) {
+        trimmed.pop();
+        break;
+      }
+    }
+    json = JSON.stringify({ skills: trimmed });
+  }
+  return json;
 }
 
 /**

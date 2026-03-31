@@ -12,9 +12,16 @@ export type AgentConfig = {
   systemPrompt?: string;
   /** Maps to AI SDK `maxOutputTokens` when set. */
   maxTokens?: number;
+  /** Selected chat model for this agent thread. */
+  modelId?: string;
   /** Last git URL used for skills sync (https only). */
   skillsGitUrl?: string;
   skillsGitLastSyncedAt?: string;
+  /**
+   * When set, only these ids from `.data/skills/skills.json` are available to find_skills/load_skill.
+   * Omit for all catalog skills. Empty array = no global catalog skills (agent-local skills still apply).
+   */
+  enabledSkillIds?: string[];
 };
 
 export function normalizeAgentConfig(
@@ -43,12 +50,23 @@ export function normalizeAgentConfig(
     systemPrompt:
       typeof o.systemPrompt === "string" ? o.systemPrompt : undefined,
     maxTokens,
+    modelId: typeof o.modelId === "string" ? o.modelId.trim() || undefined : undefined,
     skillsGitUrl:
       typeof o.skillsGitUrl === "string" ? o.skillsGitUrl : undefined,
     skillsGitLastSyncedAt:
       typeof o.skillsGitLastSyncedAt === "string"
         ? o.skillsGitLastSyncedAt
         : undefined,
+    ...(() => {
+      if (!("enabledSkillIds" in o) || o.enabledSkillIds === null) {
+        return {} as { enabledSkillIds?: string[] };
+      }
+      if (Array.isArray(o.enabledSkillIds)) {
+        const ids = o.enabledSkillIds.filter((x) => typeof x === "string");
+        return { enabledSkillIds: ids };
+      }
+      return {} as { enabledSkillIds?: string[] };
+    })(),
   };
 }
 
@@ -172,8 +190,11 @@ export type AgentConfigPatch = {
   name?: string;
   systemPrompt?: string | null;
   maxTokens?: number | null;
+  modelId?: string | null;
   skillsGitUrl?: string | null;
   skillsGitLastSyncedAt?: string;
+  /** `null` clears restriction (use all catalog skills). */
+  enabledSkillIds?: string[] | null;
 };
 
 export async function updateAgentConfigPartial(
@@ -204,6 +225,13 @@ export async function updateAgentConfigPartial(
       next.maxTokens = Math.floor(m);
     }
   }
+  if ("modelId" in patch) {
+    const m = patch.modelId;
+    next.modelId =
+      m === null || m === undefined || String(m).trim() === ""
+        ? undefined
+        : String(m).trim();
+  }
   if ("skillsGitUrl" in patch) {
     const u = patch.skillsGitUrl;
     next.skillsGitUrl =
@@ -213,6 +241,15 @@ export async function updateAgentConfigPartial(
   }
   if (patch.skillsGitLastSyncedAt !== undefined) {
     next.skillsGitLastSyncedAt = patch.skillsGitLastSyncedAt;
+  }
+  if ("enabledSkillIds" in patch) {
+    if (patch.enabledSkillIds === null) {
+      delete next.enabledSkillIds;
+    } else if (Array.isArray(patch.enabledSkillIds)) {
+      next.enabledSkillIds = patch.enabledSkillIds.filter(
+        (x) => typeof x === "string",
+      );
+    }
   }
 
   await writeAgentConfig(cwd, next);

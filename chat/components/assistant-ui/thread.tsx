@@ -7,17 +7,17 @@
 
 import {
   ActionBarPrimitive,
+  ChainOfThoughtPrimitive,
   ComposerPrimitive,
-  MessagePartPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
-  useComposer,
-  useMessage,
-  useThread,
+  useAuiState,
+  useAssistantRuntime,
+  AuiIf,
 } from "@assistant-ui/react";
-import type { TextMessagePartComponent } from "@assistant-ui/react";
 import {
   Copy,
+  ChevronRight,
   Image as ImageIcon,
   Lightbulb,
   Mic,
@@ -31,37 +31,173 @@ import {
   RotateCw,
   MoreVertical,
 } from "lucide-react";
-import type { FC } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FC,
+  type PropsWithChildren,
+} from "react";
 
 import {
   GeminiComposerAttachments,
   UserMessageAttachments,
 } from "@/components/assistant-ui/attachment";
+import { CliRunTool } from "@/components/assistant-ui/cli-run-tool";
+import {
+  MemoryRecallTool,
+  MemoryStoreTool,
+} from "@/components/assistant-ui/memory-tool";
+import { LoadSkillTool } from "@/components/assistant-ui/skill-tool";
+import { A2ASendTool } from "@/components/assistant-ui/a2a-tool";
+import { DefaultToolCard } from "@/components/assistant-ui/default-tool";
+import {
+  AssistantMessageMarkdown,
+  UserMessageMarkdown,
+} from "@/components/assistant-ui/chat-markdown";
 import { ModelSelector } from "@/components/assistant-ui/model-selector";
-import { CHAT_MODELS, DEFAULT_CHAT_MODEL } from "@/lib/chat-models";
+import { resolveMainAgentRemoteId } from "@/lib/main-agent-id";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  SquareIcon,
+} from "lucide-react";
+type SettingsApi = { chatModels?: string[]; defaultChatModel?: string };
+type AgentApi = { modelId?: string };
 
-const models = CHAT_MODELS.map((m) => ({ id: m.id, name: m.label }));
+function useRuntimeModelConfig() {
+  const runtime = useAssistantRuntime();
+  const [models, setModels] = useState<Array<{ id: string; name: string }>>([
+    { id: "qwen3.5:0.8b", name: "qwen3.5:0.8b" },
+  ]);
+  const [selectedModel, setSelectedModel] = useState("qwen3.5:0.8b");
+  const [agentId, setAgentId] = useState<string | null>(null);
 
-/** Hide raw data-URL blobs duplicated as text when the image is shown as an attachment. */
-const UserMessageText: TextMessagePartComponent = ({ text }) => {
-  if (text.startsWith("data:image/") && text.includes("base64,")) {
-    return null;
-  }
-  return (
-    <p className="whitespace-pre-line">
-      <MessagePartPrimitive.Text />
-      <MessagePartPrimitive.InProgress>
-        <span className="font-[revert]">{" \u25CF"}</span>
-      </MessagePartPrimitive.InProgress>
-    </p>
+  const load = useCallback(async () => {
+    const id = resolveMainAgentRemoteId(runtime);
+    setAgentId(id);
+    const settingsRes = await fetch("/api/settings").then((r) =>
+      r.ok
+        ? (r.json() as Promise<SettingsApi>)
+        : { chatModels: ["qwen3.5:0.8b"] },
+    );
+    const ids = settingsRes.chatModels?.filter(Boolean) ?? ["qwen3.5:0.8b"];
+    const nextModels = ids.map((m) => ({ id: m, name: m }));
+    setModels(nextModels);
+
+    let chosen = settingsRes.defaultChatModel ?? ids[0];
+    if (id) {
+      let agentRes: AgentApi = {};
+      try {
+        const r = await fetch(`/api/agents/${encodeURIComponent(id)}`);
+        if (r.ok) agentRes = (await r.json()) as AgentApi;
+      } catch {
+        /* ignore */
+      }
+      if (agentRes.modelId && ids.includes(agentRes.modelId)) {
+        chosen = agentRes.modelId;
+      }
+    }
+    setSelectedModel(chosen);
+  }, [runtime]);
+
+  useEffect(() => {
+    void load();
+    const u1 = runtime.threads.subscribe(() => void load());
+    const u2 = runtime.threads.mainItem.subscribe(() => void load());
+    return () => {
+      u1();
+      u2();
+    };
+  }, [runtime, load]);
+
+  const onModelChange = useCallback(
+    (next: string) => {
+      setSelectedModel(next);
+      if (!agentId) return;
+      void fetch(`/api/agents/${encodeURIComponent(agentId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelId: next }),
+      }).catch(() => {});
+    },
+    [agentId],
   );
-};
+
+  return { models, selectedModel, onModelChange };
+}
 
 const actionBtnClass =
   "flex size-8 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#444746]/8 dark:text-[#c4c7c5] dark:hover:bg-[#c4c7c5]/8";
 
+
+const AssistantChainOfThought: FC = () => {
+  return (
+    <ChainOfThoughtPrimitive.Root className="rounded-xl border border-[#dadce0] bg-white/80 text-xs text-[#444746] dark:border-[#3c4043] dark:bg-[#1f2022] dark:text-[#c4c7c5]">
+      <ChainOfThoughtPrimitive.AccordionTrigger className="flex w-full cursor-pointer items-center gap-2 px-4 py-2 font-medium text-sm hover:bg-muted/50">
+        <AuiIf condition={(s) => s?.chainOfThought.collapsed}>
+          <ChevronRightIcon className="size-4 shrink-0" />
+        </AuiIf>
+        <AuiIf condition={(s) => !s?.chainOfThought.collapsed}>
+          <ChevronDownIcon className="size-4 shrink-0" />
+        </AuiIf>
+        Thinking
+      </ChainOfThoughtPrimitive.AccordionTrigger>
+      <AuiIf condition={(s) => !s.chainOfThought.collapsed}>
+        <ChainOfThoughtPrimitive.Parts>
+          {({ part }) => {
+            if (part.type === "reasoning")
+              return (
+                <PartLayout>
+                  <Reasoning {...part} />
+                </PartLayout>
+              );
+            return null;
+          }}
+        </ChainOfThoughtPrimitive.Parts>
+      </AuiIf>
+    </ChainOfThoughtPrimitive.Root>
+  );
+};
+
+const PartLayout: FC<PropsWithChildren> = ({ children }) => {
+  const partType = useAuiState((s) => s.part.type);
+  const [open, setOpen] = useState(true);
+
+  const label = partType === "reasoning" ? "Thinking" : "Taking action";
+
+  return (
+    <div className="border-t">
+      <button
+        type="button"
+        className="flex w-full cursor-pointer items-center gap-2 px-4 py-1.5 text-muted-foreground text-xs hover:bg-muted/50"
+        onClick={() => setOpen((o) => !o)}
+      >
+        {open ? (
+          <ChevronDownIcon className="size-3" />
+        ) : (
+          <ChevronRightIcon className="size-3" />
+        )}
+        {label}
+      </button>
+      {open && children}
+    </div>
+  );
+};
+
+const Reasoning: FC<{ text: string }> = ({ text }) => {
+  return (
+    <p className="whitespace-pre-wrap px-4 py-2 text-muted-foreground text-sm italic">
+      {text}
+    </p>
+  );
+};
+
 const ChatMessage: FC = () => {
-  const role = useMessage((s) => s.role);
+  const role = useAuiState((s) => s.message.role);
 
   if (role === "user") {
     return (
@@ -77,28 +213,19 @@ const ChatMessage: FC = () => {
           </ActionBarPrimitive.Root>
           <div className="max-w-[85%] rounded-3xl rounded-tr bg-[#e9eef6] px-4 py-3 text-[#1f1f1f] dark:bg-[#282a2c] dark:text-[#e3e3e3]">
             <UserMessageAttachments />
-            <div className="wrap-break-word text-sm leading-relaxed">
+            <div className="flex flex-col gap-3 wrap-break-word text-sm leading-relaxed">
               <MessagePrimitive.Parts
                 components={{
-                  Text: UserMessageText,
+                  Text: UserMessageMarkdown,
                   tools: {
-                    Fallback: ({ toolName, argsText, result }) => (
-                      <div className="mt-2 rounded-lg border border-dashed border-[#dadce0] bg-black/5 p-2 font-mono text-xs dark:border-[#3c4043] dark:bg-black/20">
-                        <div className="font-semibold text-[#1a73e8] dark:text-[#8ab4f8]">{toolName}</div>
-                        {argsText ? (
-                          <pre className="mt-1 whitespace-pre-wrap text-[#444746] dark:text-[#c4c7c5]">
-                            {argsText}
-                          </pre>
-                        ) : null}
-                        {result !== undefined ? (
-                          <pre className="mt-1 whitespace-pre-wrap">
-                            {typeof result === "string"
-                              ? result
-                              : JSON.stringify(result, null, 2)}
-                          </pre>
-                        ) : null}
-                      </div>
-                    ),
+                    by_name: {
+                      cli_run: CliRunTool,
+                      load_skill: LoadSkillTool,
+                      memory_store: MemoryStoreTool,
+                      memory_recall: MemoryRecallTool,
+                      a2a_send: A2ASendTool,
+                    },
+                    Fallback: DefaultToolCard,
                   },
                 }}
               />
@@ -120,28 +247,11 @@ const ChatMessage: FC = () => {
             AI
           </div>
           <div className="min-w-0 flex-1">
-            <div className="wrap-break-word text-sm leading-relaxed text-[#1f1f1f] dark:text-[#e3e3e3]">
+            <div className="flex flex-col gap-3 wrap-break-word text-sm leading-relaxed text-[#1f1f1f] dark:text-[#e3e3e3]">
               <MessagePrimitive.Parts
                 components={{
-                  tools: {
-                    Fallback: ({ toolName, argsText, result }) => (
-                      <div className="mt-2 rounded-lg border border-dashed border-[#dadce0] bg-black/5 p-2 font-mono text-xs dark:border-[#3c4043] dark:bg-black/20">
-                        <div className="font-semibold text-[#1a73e8] dark:text-[#8ab4f8]">{toolName}</div>
-                        {argsText ? (
-                          <pre className="mt-1 whitespace-pre-wrap text-[#444746] dark:text-[#c4c7c5]">
-                            {argsText}
-                          </pre>
-                        ) : null}
-                        {result !== undefined ? (
-                          <pre className="mt-1 whitespace-pre-wrap">
-                            {typeof result === "string"
-                              ? result
-                              : JSON.stringify(result, null, 2)}
-                          </pre>
-                        ) : null}
-                      </div>
-                    ),
-                  },
+                  ChainOfThought: AssistantChainOfThought,
+                  Text: AssistantMessageMarkdown,
                 }}
               />
             </div>
@@ -152,7 +262,11 @@ const ChatMessage: FC = () => {
               <ActionBarPrimitive.Copy className={actionBtnClass}>
                 <Copy width={14} height={14} />
               </ActionBarPrimitive.Copy>
-              <button type="button" className={actionBtnClass} aria-label="More">
+              <button
+                type="button"
+                className={actionBtnClass}
+                aria-label="More"
+              >
                 <MoreVertical width={14} height={14} />
               </button>
             </ActionBarPrimitive.Root>
@@ -182,9 +296,10 @@ const SuggestionChip: FC<{
 );
 
 const GeminiComposer: FC = () => {
-  const isEmpty = useComposer((s) => s.isEmpty);
-  const isRunning = useThread((s) => s.isRunning);
-  const hasAttachments = useComposer((s) => s.attachments.length > 0);
+  const isEmpty = useAuiState((s) => s.composer.isEmpty);
+  const isRunning = useAuiState((s) => s.thread.isRunning);
+  const hasAttachments = useAuiState((s) => s.composer.attachments.length > 0);
+  const { models, selectedModel, onModelChange } = useRuntimeModelConfig();
 
   return (
     <ComposerPrimitive.Root
@@ -217,16 +332,14 @@ const GeminiComposer: FC = () => {
             <ComposerPrimitive.AddAttachment className="flex size-10 shrink-0 items-center justify-center rounded-full transition-all hover:bg-[#444746]/8 active:scale-[0.98] dark:hover:bg-[#c4c7c5]/8">
               <Plus width={20} height={20} />
             </ComposerPrimitive.AddAttachment>
-            <span className="hidden text-sm text-[#70757a] sm:inline dark:text-[#9aa0a6]">
-              Tools & skills via chat
-            </span>
           </div>
 
           <div className="flex items-center gap-2">
             <div className="min-w-0 max-w-[11rem] shrink">
               <ModelSelector
                 models={models}
-                defaultValue={DEFAULT_CHAT_MODEL}
+                value={selectedModel}
+                onValueChange={onModelChange}
                 variant="outline"
                 className="w-full border-[#dadce0] text-xs dark:border-[#3c4043]"
               />
@@ -260,7 +373,10 @@ export const Thread: FC = () => {
         <div className="flex h-full min-h-0 flex-col justify-center px-4">
           <div className="mx-auto w-full max-w-3xl">
             <div className="mb-1 flex items-center gap-3">
-              <Sparkles className="size-5 text-[#1a73e8] dark:text-[#8ab4f8]" aria-hidden />
+              <Sparkles
+                className="size-5 text-[#1a73e8] dark:text-[#8ab4f8]"
+                aria-hidden
+              />
               <p className="text-xl text-black dark:text-white">Hello there</p>
             </div>
             <p className="mb-6 text-4xl text-black dark:text-white">
@@ -275,13 +391,22 @@ export const Thread: FC = () => {
             >
               Create image
             </SuggestionChip>
-            <SuggestionChip icon={<Lightbulb width={16} height={16} />} prompt="Explain how attention works in transformers.">
+            <SuggestionChip
+              icon={<Lightbulb width={16} height={16} />}
+              prompt="Explain how attention works in transformers."
+            >
               Help me learn
             </SuggestionChip>
-            <SuggestionChip icon={<PenLine width={16} height={16} />} prompt="Draft a short professional email follow-up after an interview.">
+            <SuggestionChip
+              icon={<PenLine width={16} height={16} />}
+              prompt="Draft a short professional email follow-up after an interview."
+            >
               Write anything
             </SuggestionChip>
-            <SuggestionChip icon={<Sparkles width={16} height={16} />} prompt="Give me 3 quick wins to improve focus today.">
+            <SuggestionChip
+              icon={<Sparkles width={16} height={16} />}
+              prompt="Give me 3 quick wins to improve focus today."
+            >
               Boost my day
             </SuggestionChip>
           </div>
@@ -290,12 +415,17 @@ export const Thread: FC = () => {
 
       <ThreadPrimitive.If empty={false}>
         <ThreadPrimitive.Viewport className="flex min-h-0 flex-1 flex-col overflow-y-scroll px-4 pt-8">
-          <ThreadPrimitive.Messages components={{ Message: ChatMessage }} />
+          <ThreadPrimitive.Messages>
+            {({ message }) => {
+              return <ChatMessage />;
+            }}
+          </ThreadPrimitive.Messages>
         </ThreadPrimitive.Viewport>
         <div className="space-y-2 px-4 pb-4">
           <GeminiComposer />
           <p className="my-3 text-center text-xs text-[#70757a] dark:text-[#9aa0a6]">
-            Model responses may be inaccurate. Double-check important information.
+            Model responses may be inaccurate. Double-check important
+            information.
           </p>
         </div>
       </ThreadPrimitive.If>

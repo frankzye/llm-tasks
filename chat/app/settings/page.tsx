@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 
+import { ModelSettingsTab } from "@/components/settings/model-settings-tab";
 import { SkillsSettingsTab } from "@/components/settings/skills-settings-tab";
 
 const tabBtn =
@@ -49,9 +50,7 @@ export default function SettingsPage() {
 
       <main className="mx-auto max-w-2xl px-4 py-8">
         {tab === "general" ? (
-          <p className="text-sm text-[#5f6368] dark:text-[#9aa0a6]">
-            App-wide preferences will live here.
-          </p>
+          <ModelSettingsTab />
         ) : (
           <SkillsSettingsTab />
         )}

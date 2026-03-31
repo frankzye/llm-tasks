@@ -30,9 +30,6 @@ function ChatShell() {
             >
               Settings
             </Link>
-            <span className="text-xs text-[#70757a] dark:text-[#9aa0a6]">
-              assistant-ui + AI SDK
-            </span>
           </div>
         </header>
         <div className="flex min-h-0 flex-1">

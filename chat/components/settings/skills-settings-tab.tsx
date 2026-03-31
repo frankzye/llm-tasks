@@ -141,11 +141,23 @@ export function SkillsSettingsTab() {
           Load from Git
         </h2>
         <p className="mb-3 text-[12px] leading-relaxed text-[#70757a]">
-          HTTPS only. GitHub root URLs use branch{" "}
+          HTTPS only. Paste a{" "}
+          <strong className="font-medium text-[#444746] dark:text-[#c4c7c5]">
+            repo root
+          </strong>{" "}
+          or a{" "}
+          <strong className="font-medium text-[#444746] dark:text-[#c4c7c5]">
+            tree
+          </strong>{" "}
+          link (GitHub / Gitee):{" "}
+          <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">
+            …/owner/repo/tree/&lt;branch&gt;/&lt;folder/path&gt;
+          </code>
+          . Root URLs default to branch{" "}
           <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">main</code>{" "}
-          and sparse folder{" "}
-          <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">skills/</code>
-          . Tree URLs set branch and path.
+          and folder{" "}
+          <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">skills</code>
+          .
         </p>
         <input
           value={gitUrl}

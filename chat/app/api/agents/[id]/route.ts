@@ -46,10 +46,29 @@ export async function PATCH(req: Request, ctx: Ctx) {
       patch.maxTokens = body.maxTokens;
     }
   }
+  if ("modelId" in body) {
+    if (body.modelId === null) {
+      patch.modelId = null;
+    } else if (typeof body.modelId === "string") {
+      patch.modelId = body.modelId;
+    }
+  }
+  if ("enabledSkillIds" in body) {
+    if (body.enabledSkillIds === null) {
+      patch.enabledSkillIds = null;
+    } else if (Array.isArray(body.enabledSkillIds)) {
+      patch.enabledSkillIds = body.enabledSkillIds.filter(
+        (x): x is string => typeof x === "string",
+      );
+    }
+  }
 
   if (Object.keys(patch).length === 0) {
     return NextResponse.json(
-      { error: "No valid fields (name, systemPrompt, maxTokens)" },
+      {
+        error:
+          "No valid fields (name, systemPrompt, maxTokens, modelId, enabledSkillIds)",
+      },
       { status: 400 },
     );
   }

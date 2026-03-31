@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
+import "katex/dist/katex.min.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "LLM Tasks Agent",
-  description: "assistant-ui + AI SDK agent chat",
+  description: "agent chat",
 };
 
 export default function RootLayout({

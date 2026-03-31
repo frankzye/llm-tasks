@@ -27,7 +27,7 @@ const NewAgentButton: FC<{ className?: string }> = ({ className }) => {
   const [creating, setCreating] = useState(false);
   useEffect(() => setMounted(true), []);
   const isDraftMain = useThreadList(
-    (s) => s.newThread !== undefined && s.newThread === s.mainThreadId,
+    (s) => s.newThreadId !== undefined && s.newThreadId === s.mainThreadId,
   );
   const isLoading = useThreadList((s) => s.isLoading);
   /** Thread list state differs SSR vs client — never put `data-*` from runtime on SSR HTML. */

@@ -76,6 +76,11 @@ export function AgentSettingsModal({
     systemPrompt: "",
     maxTokens: "" as string | number,
   });
+  const [catalogSkills, setCatalogSkills] = useState<
+    Array<{ id: string; name: string; description: string; path: string }>
+  >([]);
+  const [restrictCatalogSkills, setRestrictCatalogSkills] = useState(false);
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,10 +88,31 @@ export function AgentSettingsModal({
       setLoading(true);
       setErr(null);
       try {
-        const r = await fetch(`/api/agents/${encodeURIComponent(agentId)}`);
-        if (!r.ok) throw new Error(`Load failed (${r.status})`);
-        const c = (await r.json()) as AgentConfig;
+        const [rAgent, rCat] = await Promise.all([
+          fetch(`/api/agents/${encodeURIComponent(agentId)}`),
+          fetch("/api/skills/catalog"),
+        ]);
+        if (!rAgent.ok) throw new Error(`Load failed (${rAgent.status})`);
+        if (!rCat.ok) throw new Error(`Skills catalog failed (${rCat.status})`);
+        const c = (await rAgent.json()) as AgentConfig;
+        const catJson = (await rCat.json()) as { skills?: unknown };
+        const skills = Array.isArray(catJson.skills)
+          ? (catJson.skills as Array<{
+              id: string;
+              name: string;
+              description: string;
+              path: string;
+            }>)
+          : [];
         if (cancelled) return;
+        setCatalogSkills(skills);
+        const hasRestrict = Array.isArray(c.enabledSkillIds);
+        setRestrictCatalogSkills(hasRestrict);
+        setSelectedSkillIds(
+          hasRestrict
+            ? (c.enabledSkillIds ?? [])
+            : skills.map((s) => s.id),
+        );
         setForm({
           name: c.name,
           systemPrompt: c.systemPrompt ?? "",
@@ -120,6 +146,11 @@ export function AgentSettingsModal({
         } else {
           body.maxTokens = Math.min(Math.floor(n), 128_000);
         }
+      }
+      if (!restrictCatalogSkills) {
+        body.enabledSkillIds = null;
+      } else {
+        body.enabledSkillIds = selectedSkillIds;
       }
       const r = await fetch(`/api/agents/${encodeURIComponent(agentId)}`, {
         method: "PATCH",
@@ -231,6 +262,71 @@ export function AgentSettingsModal({
                   Leave empty to use the model default. Cleared on save if blank.
                 </span>
               </label>
+
+              <div className="flex flex-col gap-2">
+                <label className="flex cursor-pointer items-start gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!restrictCatalogSkills}
+                    onChange={(e) => {
+                      const all = e.target.checked;
+                      setRestrictCatalogSkills(!all);
+                      if (all) {
+                        setSelectedSkillIds(catalogSkills.map((s) => s.id));
+                      }
+                    }}
+                    className="mt-0.5 rounded border-[#dadce0] dark:border-[#3c4043]"
+                  />
+                  <span className="text-xs font-medium text-[#444746] dark:text-[#c4c7c5]">
+                    Use all skills from the global catalog (.data/skills)
+                  </span>
+                </label>
+                {restrictCatalogSkills ? (
+                  <div className="max-h-40 overflow-y-auto rounded-lg border border-[#dadce0] bg-white p-2 dark:border-[#3c4043] dark:bg-[#131314]">
+                    <p className="mb-2 text-[11px] text-[#70757a]">
+                      Choose which catalog skills this agent may use with find_skills /
+                      load_skill. Agent-local skills under this agent&apos;s folder are
+                      always available.
+                    </p>
+                    {catalogSkills.length === 0 ? (
+                      <p className="text-xs text-[#70757a]">
+                        No SKILL.md entries in .data/skills yet.
+                      </p>
+                    ) : (
+                      <ul className="flex flex-col gap-1.5">
+                        {catalogSkills.map((s) => (
+                          <li key={s.id}>
+                            <label className="flex cursor-pointer items-start gap-2 text-xs">
+                              <input
+                                type="checkbox"
+                                checked={selectedSkillIds.includes(s.id)}
+                                onChange={(e) => {
+                                  setSelectedSkillIds((prev) =>
+                                    e.target.checked
+                                      ? [...prev, s.id]
+                                      : prev.filter((x) => x !== s.id),
+                                  );
+                                }}
+                                className="mt-0.5 rounded border-[#dadce0] dark:border-[#3c4043]"
+                              />
+                              <span>
+                                <span className="font-medium text-[#1f1f1f] dark:text-[#e3e3e3]">
+                                  {s.name}
+                                </span>
+                                {s.description ? (
+                                  <span className="block text-[11px] text-[#70757a]">
+                                    {s.description}
+                                  </span>
+                                ) : null}
+                              </span>
+                            </label>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ) : null}
+              </div>
 
               {err ? (
                 <p className="text-xs text-red-600 dark:text-red-400">{err}</p>

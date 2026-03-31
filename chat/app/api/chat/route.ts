@@ -18,26 +18,36 @@ import type { Message } from "mem0ai/oss";
 import { appendA2A } from "@/lib/agent/a2a";
 import { ensureAgent } from "@/lib/agent/agent-store";
 import { autoCompactMessages } from "@/lib/agent/compaction";
-import { runCliAllowlisted } from "@/lib/agent/cli";
+import {
+  isCliCommandAllowlisted,
+  runCliAllowlistedInSandbox,
+} from "@/lib/agent/cli";
 import {
   addConversationToAgentMemory,
   addExplicitMemory,
   getMemoryForAgent,
   searchMemoriesForAgent,
 } from "@/lib/agent/mem0-service";
+import { catalogIdSet, readSkillsCatalog } from "@/lib/agent/skills-catalog";
+import { ensureSkillsIndex } from "@/lib/agent/skills-catalog-watcher";
 import {
+  filterSkillsForCatalog,
   getSkillById,
   loadSkillsMerged,
   searchSkillsHybrid,
 } from "@/lib/agent/skills";
 import { getLastUserMessageText } from "@/lib/agent/ui-messages";
-import { DEFAULT_CHAT_MODEL, isAllowedChatModel } from "@/lib/chat-models";
+import {
+  getDefaultChatModelFromSettings,
+  isAllowedChatModel,
+} from "@/lib/chat-models";
 import { readGlobalSettings } from "@/lib/global-settings";
 import {
   globalSkillsDataDir,
   legacyRepoSkillsDir,
 } from "@/lib/global-skills-paths";
 import { getOpenAI } from "@/lib/openai-provider";
+import { getOllama } from "@/lib/ollama-provider";
 
 async function pathExists(p: string): Promise<boolean> {
   try {
@@ -50,9 +60,43 @@ async function pathExists(p: string): Promise<boolean> {
 
 export const maxDuration = 60;
 
-const BASE_SYSTEM = `You are an agent assistant with tools for skills (RAG), Mem0 long-term memory, a safe CLI, and agent-to-agent (A2A) messaging.
-Global skills live under .data/skills/ (Settings: Git sync, folder import, optional extra path). Each agent also has .data/agents/<threadId>/skills/.
-Use find_skills before load_skill when you need procedural knowledge. Store durable user facts with memory_store (Mem0).`;
+const DEFAULT_BASE_SYSTEM = `You are a helpful assistant.`;
+
+async function getBaseSystem(cwd: string): Promise<string> {
+  const p = path.join(cwd, "system_prompt.md");
+  try {
+    const raw = await fs.readFile(p, "utf8");
+    const trimmed = raw.trim();
+    return trimmed || DEFAULT_BASE_SYSTEM;
+  } catch {
+    return DEFAULT_BASE_SYSTEM;
+  }
+}
+
+const MD_LINK_RE = /\[[^\]]+\]\(([^)]+)\)/g;
+
+function extractSkillResourceHints(body: string): string[] {
+  const out: string[] = [];
+  for (const m of body.matchAll(MD_LINK_RE)) {
+    const target = (m[1] ?? "").trim();
+    if (!target) continue;
+    if (/^[a-z]+:\/\//i.test(target)) continue;
+    if (target.startsWith("#")) continue;
+    out.push(target.replace(/\\/g, "/"));
+  }
+  return [...new Set(out)].slice(0, 30);
+}
+
+function safeResolveSkillResource(baseDir: string, relPath: string): string | null {
+  const normalized = relPath.replace(/\\/g, "/").trim();
+  if (!normalized) return null;
+  if (normalized.startsWith("/")) return null;
+  if (normalized.includes("\0")) return null;
+  const joined = path.resolve(baseDir, normalized);
+  const rel = path.relative(baseDir, joined).replace(/\\/g, "/");
+  if (rel.startsWith("../") || rel === "..") return null;
+  return joined;
+}
 
 export async function POST(req: Request) {
   const {
@@ -72,19 +116,39 @@ export async function POST(req: Request) {
   const cwd = process.cwd();
   const { config: agentConfig } = await ensureAgent(cwd, rawThreadId ?? "default");
   const agentId = agentConfig.id;
-
-  const envDefault = process.env.DEFAULT_CHAT_MODEL ?? DEFAULT_CHAT_MODEL;
-  const modelId =
-    requestedModel && isAllowedChatModel(requestedModel)
-      ? requestedModel
-      : envDefault;
-  const openai = getOpenAI();
-  // Use Chat Completions (`/v1/chat/completions`). Ollama and most gateways do not support
-  // the default `openai(modelId)` Responses API (`/v1/responses`, item_reference types).
-  const model = openai.chat(modelId);
+  const baseSystem = await getBaseSystem(cwd);
   const settings = await readGlobalSettings(cwd);
+
+  const envDefault = process.env.DEFAULT_CHAT_MODEL?.trim();
+  const settingsDefault = getDefaultChatModelFromSettings(settings);
+  const preferredDefault =
+    agentConfig.modelId && isAllowedChatModel(agentConfig.modelId, settings)
+      ? agentConfig.modelId
+      : envDefault && isAllowedChatModel(envDefault, settings)
+        ? envDefault
+        : settingsDefault;
+  const modelId =
+    requestedModel && isAllowedChatModel(requestedModel, settings)
+      ? requestedModel
+      : preferredDefault;
+  const provider = settings.provider ?? "openai";
+  const providerBaseUrl = settings.providerBaseUrl ?? undefined;
+  const providerApiKey = settings.providerApiKey ?? undefined;
+  const model =
+    provider === "ollama"
+      ? getOllama({
+          baseURL: providerBaseUrl,
+          apiKey: providerApiKey,
+        }).chat(modelId, { think: true })
+      : getOpenAI({
+          baseURL: providerBaseUrl,
+          apiKey: providerApiKey,
+        }).chat(modelId);
   const globalSkillsDir = globalSkillsDataDir(cwd);
   await fs.mkdir(globalSkillsDir, { recursive: true });
+  await ensureSkillsIndex(cwd);
+  const catalog = await readSkillsCatalog(globalSkillsDir);
+  const catalogIds = catalogIdSet(catalog);
   const extraGlobalDirs: string[] = [];
   const legacy = legacyRepoSkillsDir(cwd);
   if (await pathExists(legacy)) extraGlobalDirs.push(legacy);
@@ -94,11 +158,29 @@ export async function POST(req: Request) {
     if (await pathExists(resolved)) extraGlobalDirs.push(resolved);
   }
   const agentSkillsDir = path.join(cwd, ".data", "agents", agentId, "skills");
-  const skills = await loadSkillsMerged(
+  const merged = await loadSkillsMerged(
     globalSkillsDir,
     agentSkillsDir,
     extraGlobalDirs,
   );
+  const skills = filterSkillsForCatalog(
+    merged,
+    catalogIds,
+    agentConfig.enabledSkillIds,
+  );
+  const catalogById = new Map((catalog?.skills ?? []).map((s) => [s.id, s] as const));
+  const skillsInventory = skills
+    .map((s) => {
+      const cat = catalog?.skills.find((x) => x.id === s.id);
+      return {
+        skillId: s.id,
+        name: cat?.name ?? s.title,
+        description:
+          cat?.description?.trim() ||
+          s.body.slice(0, 220).replace(/\s+/g, " ").trim(),
+      };
+    })
+    .sort((a, b) => a.skillId.localeCompare(b.skillId));
 
   const compacted = await autoCompactMessages(messages, model, {
     maxChars: 14_000,
@@ -121,7 +203,7 @@ export async function POST(req: Request) {
   }
 
   const mergedSystem = [
-    BASE_SYSTEM,
+    baseSystem,
     agentConfig.systemPrompt,
     mem0Context,
     system,
@@ -161,46 +243,102 @@ export async function POST(req: Request) {
       ...frontendTools(tools ?? {}),
       find_skills: tool({
         description:
-          "Hybrid search (BM25 + bag-of-words similarity) over global .data/skills/, optional legacy repo skills/ and optional Settings path, then this agent's .data/agents/<id>/skills/ (agent wins on duplicate ids).",
+          "Find available skills and return both ranked matches and compact skills inventory (skillId, name, description).",
         inputSchema: zodSchema(
           z.object({
-            query: z.string(),
+            query: z
+              .string()
+              .describe("Search text using task words and skill concepts."),
             limit: z.number().min(1).max(20).optional(),
           }),
         ),
         execute: async ({ query, limit }) => {
           const hits = searchSkillsHybrid(query, skills, limit ?? 8);
-          return { hits };
+          return {
+            hits,
+            skillsInventory,
+          };
         },
       }),
       load_skill: tool({
-        description: "Load full skill document body by id (from find_skills).",
+        description:
+          "Load the full skill document by exact skillId from find_skills.",
         inputSchema: zodSchema(
           z.object({
-            skillId: z.string(),
+            skillId: z
+              .string()
+              .describe(
+                "Exact skillId returned by find_skills (not the display name).",
+              ),
           }),
         ),
         execute: async ({ skillId }) => {
           const s = getSkillById(skills, skillId);
           if (!s) return { error: `Unknown skill: ${skillId}` };
+          const cat = catalogById.get(s.id);
+          const skillMdPath =
+            cat && path.resolve(globalSkillsDir, cat.path).replace(/\\/g, "/");
+          const resourceHints = extractSkillResourceHints(s.body);
           return {
             id: s.id,
             title: s.title,
             tags: s.tags,
+            skillMdPath,
+            resourceHints,
             body: s.body.slice(0, 48_000),
           };
         },
       }),
-      memory_store: tool({
+      load_skill_resource: tool({
         description:
-          "Persist a fact in this agent's Mem0 long-term memory (semantic retrieval on later turns).",
+          "Load an additional file referenced by SKILL.md (progressive disclosure). Use skillId + relativePath from load_skill.resourceHints.",
         inputSchema: zodSchema(
           z.object({
-            key: z.string(),
-            value: z.string(),
+            skillId: z.string(),
+            relativePath: z.string(),
           }),
         ),
-        execute: async ({ key, value }) => {
+        execute: async ({ skillId, relativePath }) => {
+          const s = getSkillById(skills, skillId);
+          if (!s) return { error: `Unknown skill: ${skillId}` };
+          const cat = catalogById.get(skillId);
+          if (!cat) {
+            return {
+              error:
+                "Resource loading is only supported for catalog skills under .data/skills.",
+            };
+          }
+          const skillMdAbs = path.resolve(globalSkillsDir, cat.path);
+          const baseDir = path.dirname(skillMdAbs);
+          const full = safeResolveSkillResource(baseDir, relativePath);
+          if (!full) {
+            return { error: "Invalid relativePath" };
+          }
+          try {
+            const raw = await fs.readFile(full, "utf8");
+            return {
+              skillId,
+              relativePath: relativePath.replace(/\\/g, "/"),
+              body: raw.slice(0, 48_000),
+            };
+          } catch (e) {
+            return { error: `Failed to read resource: ${String(e)}` };
+          }
+        },
+      }),
+      memory_store: tool({
+        description:
+          "Save a short fact to this agent's Mem0 long-term memory. Call **only** when the user clearly asks you to remember, save, or store information or messages for later—not on your own initiative.",
+        inputSchema: zodSchema(
+          z.object({
+            content: z
+              .string()
+              .describe(
+                "What to store: the fact, preference, or message excerpt the user asked you to remember.",
+              ),
+          }),
+        ),
+        execute: async ({ content }) => {
           if (!getMemoryForAgent(cwd, agentId)) {
             return {
               ok: false as const,
@@ -209,12 +347,8 @@ export async function POST(req: Request) {
             };
           }
           try {
-            await addExplicitMemory(
-              cwd,
-              agentId,
-              `${key}: ${value}`,
-            );
-            return { ok: true as const, key };
+            await addExplicitMemory(cwd, agentId, content);
+            return { ok: true as const };
           } catch (e) {
             return { ok: false as const, error: String(e) };
           }
@@ -255,15 +389,24 @@ export async function POST(req: Request) {
       }),
       cli_run: tool({
         description:
-          "Run a allowlisted shell command (no shell metacharacters). Allowed: pwd, echo, date, uname, whoami, hostname, wc, ls.",
+          "Run a shell command in an isolated temp sandbox (not the project directory). If the command uses only the allowlisted binaries (pwd, echo, date, uname, whoami, hostname, wc, ls), it runs immediately. Otherwise the tool returns pending_approval and the user must approve in the UI (Run) before execution—see assistant-ui Tools / human-in-the-loop patterns.",
         inputSchema: zodSchema(
           z.object({
-            command: z.string(),
+            command: z
+              .string()
+              .describe("Single command; allowlisted tools run at once, others wait for user Run in the chat UI."),
           }),
         ),
         execute: async ({ command }) => {
-          const out = await runCliAllowlisted(command, process.cwd());
-          return { output: out };
+          const cmd = command.trim();
+          if (!cmd) {
+            return { status: "error" as const, message: "empty command" };
+          }
+          if (isCliCommandAllowlisted(cmd)) {
+            const output = await runCliAllowlistedInSandbox(cmd);
+            return { status: "completed" as const, output };
+          }
+          return { status: "pending_approval" as const, command: cmd };
         },
       }),
       a2a_send: tool({
@@ -289,7 +432,7 @@ export async function POST(req: Request) {
           };
         },
       }),
-    },
+    }
   });
 
   return result.toUIMessageStreamResponse();

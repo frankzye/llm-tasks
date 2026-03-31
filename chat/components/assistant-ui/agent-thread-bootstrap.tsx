@@ -20,13 +20,13 @@ export function AgentThreadBootstrap() {
       if (placeholderBootstrapDone) return;
       const s = runtime.threads.getState();
       if (s.isLoading) return;
-      if (s.threads.length === 0) return;
+      if (s.threadIds.length === 0) return;
       if (!s.mainThreadId?.startsWith("__LOCALID_")) {
         placeholderBootstrapDone = true;
         return;
       }
       placeholderBootstrapDone = true;
-      void runtime.threads.switchToThread(s.threads[0]);
+      void runtime.threads.switchToThread(s.threadIds[0]);
     };
 
     const unsub = runtime.threads.subscribe(trySwitch);

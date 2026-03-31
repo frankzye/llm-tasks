@@ -37,31 +37,41 @@ export type ParsedSkillsGitInput = {
   subpath: string;
 };
 
+/** Strip trailing slash and mistaken `.git` on a path segment (common in pasted tree URLs). */
+function normalizeTreePathRest(rest: string): string {
+  let sub = rest.replace(/\/$/, "").trim();
+  if (sub.endsWith(".git")) sub = sub.slice(0, -4).trim();
+  return sub;
+}
+
 /**
- * Parses GitHub URLs:
- * - `https://github.com/org/repo/tree/branch/path/in/repo` → clone org/repo, branch, subpath
- * - `https://github.com/org/repo` → clone org/repo, branch `main`, subpath `skills` (Anthropic-style layout)
+ * Parses GitHub / Gitee tree and repo-root URLs:
+ * - `.../org/repo/tree/branch/rel/path` → clone `https://host/org/repo`, branch, subpath
+ * - `https://gitee.com/airbmw/skills/tree/klazuka/export/skills/doc` → branch `klazuka`, subpath `export/skills/doc`
+ * - `.../org/repo` → branch `main`, subpath `skills`
  */
 export function parseSkillsGitInput(raw: string): ParsedSkillsGitInput | null {
   const s = raw.trim();
   const tree = s.match(
-    /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/tree\/([^/]+)\/?(.*)$/,
+    /^https:\/\/(github\.com|gitee\.com)\/([^/]+)\/([^/]+?)(?:\.git)?\/tree\/([^/]+)\/?(.*)$/,
   );
   if (tree) {
-    const [, owner, repo, branch, rest] = tree;
-    const sub = rest.replace(/\/$/, "").trim();
+    const [, host, owner, repo, branch, rest] = tree;
+    const sub = normalizeTreePathRest(rest);
     return {
-      cloneUrl: toCloneUrl(`https://github.com/${owner}/${repo}`),
+      cloneUrl: toCloneUrl(`https://${host}/${owner}/${repo}`),
       branch,
       subpath: sub || "skills",
     };
   }
 
-  const root = s.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+  const root = s.match(
+    /^https:\/\/(github\.com|gitee\.com)\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/,
+  );
   if (root) {
-    const [, owner, repo] = root;
+    const [, host, owner, repo] = root;
     return {
-      cloneUrl: toCloneUrl(`https://github.com/${owner}/${repo}`),
+      cloneUrl: toCloneUrl(`https://${host}/${owner}/${repo}`),
       branch: "main",
       subpath: "skills",
     };
@@ -93,6 +103,13 @@ function applyOverrides(
       branch: opts?.branch?.trim() || parsed.branch,
       subpath: resolveSubpath(parsed, opts),
     };
+  }
+
+  const t = raw.trim();
+  if (/\/tree\//i.test(t)) {
+    throw new Error(
+      "Unsupported repository tree URL. Use GitHub or Gitee, e.g. https://gitee.com/owner/repo/tree/branch/folder/path",
+    );
   }
 
   assertSafeGitUrl(raw);
