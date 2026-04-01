@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 type SettingsApi = {
   chatModels?: string[];
   defaultChatModel?: string;
-  provider?: "openai" | "ollama";
+  provider?: "openai" | "ollama" | "deepseek";
   providerBaseUrl?: string | null;
   providerApiKey?: string | null;
 };
@@ -13,7 +13,7 @@ type SettingsApi = {
 export function ModelSettingsTab() {
   const [modelsText, setModelsText] = useState("");
   const [defaultModel, setDefaultModel] = useState("");
-  const [provider, setProvider] = useState<"openai" | "ollama">("openai");
+  const [provider, setProvider] = useState<"openai" | "ollama" | "deepseek">("openai");
   const [providerBaseUrl, setProviderBaseUrl] = useState("");
   const [providerApiKey, setProviderApiKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -105,11 +105,14 @@ export function ModelSettingsTab() {
         </span>
         <select
           value={provider}
-          onChange={(e) => setProvider(e.target.value as "openai" | "ollama")}
+          onChange={(e) =>
+            setProvider(e.target.value as "openai" | "ollama" | "deepseek")
+          }
           className="w-full rounded-lg border border-[#dadce0] bg-[#f8f9fa] px-3 py-2 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#0c0c0c] dark:text-[#e3e3e3]"
         >
           <option value="openai">openai</option>
           <option value="ollama">ollama</option>
+          <option value="deepseek">deepseek</option>
         </select>
       </label>
       <label className="mb-3 block">
@@ -122,7 +125,9 @@ export function ModelSettingsTab() {
           placeholder={
             provider === "ollama"
               ? "http://localhost:11434"
-              : "https://api.openai.com/v1"
+              : provider === "deepseek"
+                ? "https://api.deepseek.com"
+                : "https://api.openai.com/v1"
           }
           className="w-full rounded-lg border border-[#dadce0] bg-[#f8f9fa] px-3 py-2 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#0c0c0c] dark:text-[#e3e3e3]"
         />

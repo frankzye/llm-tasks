@@ -1,38 +1,39 @@
 "use client";
 
-import { useAssistantRuntime } from "@assistant-ui/react";
+import { useAui, useAuiState } from "@assistant-ui/react";
 import { useEffect } from "react";
 
 /**
  * Remote thread list starts on a placeholder `__LOCALID_*` thread. After agents load from
  * the server, switch to the first real agent once so we don't create a second agent by mistake.
  *
- * Module-level (not ref): a ref resets on remount and would re-run this logic when the user
- * clicks "New agent" (main becomes `__LOCALID_*` again), stealing the draft back to the first agent.
+ * Track per runtime instance:
+ * - keeps "new agent draft" behavior intact within the same runtime
+ * - still re-runs when the user leaves and comes back (new runtime instance)
  */
-let placeholderBootstrapDone = false;
+const bootstrappedRuntimes = new WeakSet<object>();
 
 export function AgentThreadBootstrap() {
-  const runtime = useAssistantRuntime();
+  const aui = useAui();
+  const isLoading = useAuiState((s) => s.threads.isLoading);
+  const threadIds = useAuiState((s) => s.threads.threadIds);
+  const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
 
   useEffect(() => {
-    const trySwitch = () => {
-      if (placeholderBootstrapDone) return;
-      const s = runtime.threads.getState();
-      if (s.isLoading) return;
-      if (s.threadIds.length === 0) return;
-      if (!s.mainThreadId?.startsWith("__LOCALID_")) {
-        placeholderBootstrapDone = true;
-        return;
-      }
-      placeholderBootstrapDone = true;
-      void runtime.threads.switchToThread(s.threadIds[0]);
-    };
+    const threads = aui.threads();
+    const runtime = threads.__internal_getAssistantRuntime?.();
+    if (!runtime) return;
 
-    const unsub = runtime.threads.subscribe(trySwitch);
-    trySwitch();
-    return unsub;
-  }, [runtime]);
+    if (bootstrappedRuntimes.has(runtime as object)) return;
+    if (isLoading) return;
+    if (threadIds.length === 0) return;
+    if (!mainThreadId?.startsWith("__LOCALID_")) {
+      bootstrappedRuntimes.add(runtime as object);
+      return;
+    }
+    bootstrappedRuntimes.add(runtime as object);
+    void threads.switchToThread(threadIds[0]);
+  }, [aui, isLoading, mainThreadId, threadIds]);
 
   return null;
 }

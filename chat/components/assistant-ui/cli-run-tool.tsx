@@ -1,229 +1,130 @@
 "use client";
 
-import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
-import { Check, Copy, Loader2, Terminal, X } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import {
+  type ToolCallMessagePartComponent,
+  type ToolCallMessagePartProps,
+} from "@assistant-ui/react";
+import { Check, Loader2, TerminalSquare, X } from "lucide-react";
+import { useToolApprovalResponse } from "@/lib/tool-approval-response-context";
 
-type CliArgs = { command?: string };
+function normalizeTerminalText(text: string): string {
+  let normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  try {
+    const decoded = JSON.parse(`"${normalized.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`) as string;
+    normalized = decoded;
+  } catch {
+    // Keep raw text when escape decoding is not applicable.
+  }
+  return normalized;
+}
 
-function parseCommand(
-  args: unknown,
-  argsText: string,
-): string {
-  if (args && typeof args === "object" && args !== null) {
-    const c = (args as CliArgs).command;
-    if (typeof c === "string") return c;
+function formatOutput(result: unknown): string {
+  if (result === undefined) return "Running...";
+  if (typeof result === "string") return normalizeTerminalText(result);
+  if (result === null) return "null";
+  if (typeof result === "number" || typeof result === "boolean") {
+    return String(result);
+  }
+  if (typeof result === "object") {
+    const rec = result as Record<string, unknown>;
+    if (typeof rec.output === "string") {
+      return normalizeTerminalText(rec.output);
+    }
+    if (typeof rec.stdout === "string" || typeof rec.stderr === "string") {
+      const stdout =
+        typeof rec.stdout === "string" ? normalizeTerminalText(rec.stdout) : "";
+      const stderr =
+        typeof rec.stderr === "string" ? normalizeTerminalText(rec.stderr) : "";
+      const exitCode =
+        typeof rec.exitCode === "number" ? `\n(exit code: ${rec.exitCode})` : "";
+      if (stdout || stderr) {
+        return `${stdout}${stderr ? `${stdout ? "\n" : ""}${stderr}` : ""}${exitCode}`;
+      }
+    }
   }
   try {
-    const j = JSON.parse(argsText) as { command?: string };
-    if (typeof j.command === "string") return j.command;
+    return normalizeTerminalText(JSON.stringify(result, null, 2));
   } catch {
-    /* ignore */
+    return String(result);
   }
-  return argsText;
 }
 
-type ResultShape =
-  | { status: "completed"; output: string }
-  | { status: "pending_approval"; command: string }
-  | { status: "error"; message: string };
+export const CliRunTool: ToolCallMessagePartComponent = (
+  props: ToolCallMessagePartProps,
+) => {
+  const { result, status, resume, interrupt } = props;
+  const addToolApprovalResponse = useToolApprovalResponse();
 
-function normalizeResult(result: unknown): ResultShape | null {
-  if (result === undefined || result === null) return null;
-  if (typeof result !== "object") return null;
-  const r = result as Record<string, unknown>;
-  if (r.status === "completed" && typeof r.output === "string") {
-    return { status: "completed", output: r.output };
-  }
-  if (r.status === "pending_approval" && typeof r.command === "string") {
-    return { status: "pending_approval", command: r.command };
-  }
-  if (r.status === "error" && typeof r.message === "string") {
-    return { status: "error", message: r.message };
-  }
-  if (typeof r.output === "string" && r.status === undefined) {
-    return { status: "completed", output: r.output };
-  }
-  return null;
-}
+  const approvalId =
+    interrupt?.type === "human" &&
+      interrupt.payload &&
+      typeof interrupt.payload === "object" &&
+      "id" in interrupt.payload &&
+      typeof interrupt.payload.id === "string"
+      ? interrupt.payload.id
+      : undefined;
 
-/**
- * Cursor-style CLI card: allowlisted runs show output; non-allowlisted show Run / Skip
- * before calling `/api/cli/execute` (see [assistant-ui Tools](https://www.assistant-ui.com/docs/guides/tools)).
- */
-export const CliRunTool: ToolCallMessagePartComponent<CliArgs, ResultShape> = ({
-  args,
-  argsText,
-  result,
-}) => {
-  const command = useMemo(() => parseCommand(args, argsText), [args, argsText]);
-  const initial = normalizeResult(result);
-
-  const [approvedOutput, setApprovedOutput] = useState<string | null>(null);
-  const [approvedError, setApprovedError] = useState<string | null>(null);
-  const [skipped, setSkipped] = useState(false);
-  const [loading, setLoading] = useState(false);
-
-  const runApproved = useCallback(async () => {
-    setLoading(true);
-    setApprovedError(null);
-    try {
-      const res = await fetch("/api/cli/execute", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command, approved: true }),
-      });
-      const data = (await res.json()) as {
-        ok?: boolean;
-        output?: string;
-        error?: string;
-      };
-      if (!res.ok || data.ok === false) {
-        setApprovedError(data.error ?? `Request failed (${res.status})`);
-        return;
-      }
-      setApprovedOutput(typeof data.output === "string" ? data.output : "");
-    } catch (e) {
-      setApprovedError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
+  const onApprove = () => {
+    if (approvalId && addToolApprovalResponse) {
+      void addToolApprovalResponse({ id: approvalId, approved: true });
+      return;
     }
-  }, [command]);
+    resume(true);
+  };
 
-  const copyCmd = useCallback(() => {
-    void navigator.clipboard.writeText(command);
-  }, [command]);
+  const onReject = () => {
+    if (approvalId && addToolApprovalResponse) {
+      void addToolApprovalResponse({ id: approvalId, approved: false });
+      return;
+    }
+    resume(false);
+  };
 
-  const copyOut = useCallback(
-    (text: string) => {
-      void navigator.clipboard.writeText(text);
-    },
-    [],
-  );
-
-  const completedOutput =
-    initial?.status === "completed"
-      ? initial.output
-      : approvedOutput !== null
-        ? approvedOutput
-        : null;
-
-  const showPendingCard =
-    initial?.status === "pending_approval" &&
-    approvedOutput === null &&
-    !skipped &&
-    !loading;
-
-  const errMsg =
-    initial?.status === "error"
-      ? initial.message
-      : approvedError;
+  const waitingForApproval = status.type === "requires-action";
+  const running = result === undefined && !waitingForApproval;
+  const output = formatOutput(result);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-[#2d333b] bg-[#0d1117] text-left shadow-lg dark:border-[#30363d]">
-      <div className="flex items-center gap-2 border-b border-[#30363d] bg-[#161b22] px-3 py-2">
-        <Terminal className="size-4 shrink-0 text-[#58a6ff]" aria-hidden />
-        <span className="text-xs font-semibold tracking-wide text-[#c9d1d9]">
-          CLI
-        </span>
-        <span className="ml-auto text-[10px] font-medium uppercase text-[#8b949e]">
-          sandbox
-        </span>
+    <div className="mb-4 overflow-hidden rounded-2xl border border-[#dadce0] bg-white/95 shadow-sm dark:border-[#3c4043] dark:bg-[#1e1f20]">
+      <div className="flex items-center justify-between border-b border-[#e8eaed] px-3 py-2 dark:border-[#34373b]">
+        <div className="flex items-center gap-2 text-sm font-medium text-[#1f1f1f] dark:text-[#e8eaed]">
+          <TerminalSquare className="size-4 text-[#1a73e8] dark:text-[#8ab4f8]" />
+          CLI Run
+        </div>
+        <div className="text-xs text-[#5f6368] dark:text-[#9aa0a6]">
+          {waitingForApproval ? "Waiting for approval" : running ? "Running..." : "Completed"}
+        </div>
       </div>
 
-      <div className="px-3 py-2">
-        <div className="mb-2 flex items-start gap-2">
-          <code className="min-w-0 flex-1 wrap-break-word rounded-md bg-[#21262d] px-2.5 py-2 font-mono text-[13px] leading-snug text-[#79c0ff]">
-            {command || "(no command)"}
-          </code>
+      <pre className="max-h-72 overflow-auto bg-[#101317] px-3 py-2.5 font-mono text-xs leading-relaxed text-[#d9e2ec] dark:bg-[#0d1117]">
+        {output}
+      </pre>
+
+      {waitingForApproval ? (
+        <div className="flex items-center justify-end gap-2 border-t border-[#e8eaed] px-3 py-2.5 dark:border-[#34373b]">
           <button
             type="button"
-            onClick={copyCmd}
-            className="shrink-0 rounded-md p-1.5 text-[#8b949e] transition-colors hover:bg-[#21262d] hover:text-[#c9d1d9]"
-            title="Copy command"
+            onClick={onReject}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[#dadce0] bg-white px-3 py-1.5 text-xs font-medium text-[#3c4043] hover:bg-[#f1f3f4] dark:border-[#3c4043] dark:bg-[#1f2328] dark:text-[#c9d1d9] dark:hover:bg-[#262c36]"
           >
-            <Copy className="size-4" />
+            <X className="size-3.5" />
+            Reject
+          </button>
+          <button
+            type="button"
+            onClick={onApprove}
+            className="inline-flex items-center gap-1.5 rounded-md bg-[#1a73e8] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#1765cc] dark:bg-[#2f81f7] dark:hover:bg-[#1f6feb]"
+          >
+            <Check className="size-3.5" />
+            Accept
           </button>
         </div>
-
-        {initial?.status === "error" ? (
-          <p className="rounded-md border border-red-500/40 bg-red-500/10 px-2.5 py-2 font-mono text-xs text-red-300">
-            {initial.message}
-          </p>
-        ) : null}
-
-        {errMsg ? (
-          <p className="mt-2 rounded-md border border-red-500/40 bg-red-500/10 px-2.5 py-2 font-mono text-xs text-red-300">
-            {errMsg}
-          </p>
-        ) : null}
-
-        {showPendingCard ? (
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            <p className="w-full text-xs text-[#8b949e]">
-              This command is not in the auto-allow list. Run it in the isolated
-              temp sandbox?
-            </p>
-            <button
-              type="button"
-              disabled={loading}
-              onClick={() => void runApproved()}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[#238636] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#2ea043] disabled:opacity-50"
-            >
-              {loading ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Check className="size-3.5" />
-              )}
-              Run
-            </button>
-            <button
-              type="button"
-              disabled={loading}
-              onClick={() => setSkipped(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#30363d] bg-[#21262d] px-3 py-1.5 text-xs font-medium text-[#c9d1d9] transition-colors hover:bg-[#30363d] disabled:opacity-50"
-            >
-              <X className="size-3.5" />
-              Skip
-            </button>
-          </div>
-        ) : null}
-
-        {skipped ? (
-          <p className="pt-2 text-xs italic text-[#8b949e]">Skipped by user.</p>
-        ) : null}
-
-        {loading && initial?.status === "pending_approval" ? (
-          <p className="flex items-center gap-2 pt-2 text-xs text-[#8b949e]">
-            <Loader2 className="size-3.5 animate-spin" />
-            Running in sandbox…
-          </p>
-        ) : null}
-
-        {completedOutput !== null && !showPendingCard ? (
-          <div className="mt-2 border-t border-[#30363d] pt-2">
-            <div className="mb-1 flex items-center justify-between">
-              <span className="text-[10px] font-semibold uppercase text-[#8b949e]">
-                Output
-              </span>
-              <button
-                type="button"
-                onClick={() => copyOut(completedOutput)}
-                className="text-[10px] text-[#58a6ff] hover:underline"
-              >
-                Copy
-              </button>
-            </div>
-            <pre className="max-h-64 overflow-auto wrap-break-word rounded-md bg-[#010409] p-2.5 font-mono text-[12px] leading-relaxed text-[#c9d1d9]">
-              {completedOutput || "(empty)"}
-            </pre>
-          </div>
-        ) : null}
-
-        {result === undefined && !initial ? (
-          <p className="text-xs text-[#8b949e]">Waiting for result…</p>
-        ) : null}
-      </div>
+      ) : running ? (
+        <div className="flex items-center gap-2 border-t border-[#e8eaed] px-3 py-2 text-xs text-[#5f6368] dark:border-[#34373b] dark:text-[#9aa0a6]">
+          <Loader2 className="size-3.5 animate-spin" />
+          Executing command...
+        </div>
+      ) : null}
     </div>
   );
 };

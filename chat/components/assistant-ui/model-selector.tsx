@@ -6,7 +6,7 @@
  * @see https://github.com/assistant-ui/assistant-ui/blob/main/packages/ui/src/components/assistant-ui/model-selector.tsx
  */
 
-import { useAssistantRuntime } from "@assistant-ui/react";
+import { useAui } from "@assistant-ui/react";
 import {
   createContext,
   memo,
@@ -135,14 +135,14 @@ const ModelSelectorImpl = ({
   const value = isControlled ? controlledValue : internalValue;
   const onValueChange = controlledOnValueChange ?? setInternalValue;
 
-  const runtime = useAssistantRuntime();
+  const aui = useAui();
 
   useEffect(() => {
     const config = { config: { modelName: value } };
-    return runtime.registerModelContextProvider({
+    return aui.modelContext().register({
       getModelContext: () => config,
     });
-  }, [runtime, value]);
+  }, [aui, value]);
 
   return (
     <ModelSelectorRoot models={models} value={value}>

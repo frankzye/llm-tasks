@@ -47,7 +47,11 @@ export async function PATCH(req: Request) {
   if ("provider" in body) {
     if (body.provider === null || body.provider === "") {
       patch.provider = undefined;
-    } else if (body.provider === "openai" || body.provider === "ollama") {
+    } else if (
+      body.provider === "openai" ||
+      body.provider === "ollama" ||
+      body.provider === "deepseek"
+    ) {
       patch.provider = body.provider;
     }
   }

@@ -2,6 +2,11 @@
 
 import type { ToolCallMessagePartComponent, ToolCallMessagePartProps } from "@assistant-ui/react";
 import { Loader2, Puzzle, TriangleAlert } from "lucide-react";
+import { A2ASendTool } from "@/components/assistant-ui/a2a-tool";
+import { CliRunTool } from "@/components/assistant-ui/cli-run-tool";
+import { FindSkillsTool } from "@/components/assistant-ui/find-skills-tool";
+import { MemoryRecallTool, MemoryStoreTool } from "@/components/assistant-ui/memory-tool";
+import { LoadSkillTool } from "@/components/assistant-ui/skill-tool";
 
 function truncate(s: string, n: number): string {
   const t = s.trim();
@@ -33,10 +38,23 @@ function summarizeResult(result: unknown): { okLabel: string; detail?: string; i
   return { okLabel: "Completed" };
 }
 
-export const DefaultToolCard: ToolCallMessagePartComponent = ({
-  toolName,
-  result,
-}: ToolCallMessagePartProps) => {
+const SPECIALIZED_TOOL_COMPONENTS: Record<string, ToolCallMessagePartComponent> = {
+  cli_run: CliRunTool as ToolCallMessagePartComponent,
+  find_skills: FindSkillsTool as ToolCallMessagePartComponent,
+  load_skill: LoadSkillTool as ToolCallMessagePartComponent,
+  memory_store: MemoryStoreTool as ToolCallMessagePartComponent,
+  memory_recall: MemoryRecallTool as ToolCallMessagePartComponent,
+  a2a_send: A2ASendTool as ToolCallMessagePartComponent,
+};
+
+export const DefaultToolCard: ToolCallMessagePartComponent = (
+  props: ToolCallMessagePartProps,
+) => {
+  const { toolName, result } = props;
+
+  const Specialized = SPECIALIZED_TOOL_COMPONENTS[toolName];
+  if (Specialized) return <Specialized {...props} />;
+
   const summary = summarizeResult(result);
   const loading = result === undefined;
 

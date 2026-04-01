@@ -11,7 +11,7 @@ export type GlobalSettings = {
   /** Default chat model id when agent/user does not select one. */
   defaultChatModel?: string;
   /** Chat provider used by /api/chat. */
-  provider?: "openai" | "ollama";
+  provider?: "openai" | "ollama" | "deepseek";
   /** Provider API root/base URL. */
   providerBaseUrl?: string | null;
   /** Provider API key/token. */
@@ -46,7 +46,7 @@ export async function readGlobalSettings(cwd: string): Promise<GlobalSettings> {
     if (typeof o.defaultChatModel === "string" && o.defaultChatModel.trim()) {
       out.defaultChatModel = o.defaultChatModel.trim();
     }
-    if (o.provider === "openai" || o.provider === "ollama") {
+    if (o.provider === "openai" || o.provider === "ollama" || o.provider === "deepseek") {
       out.provider = o.provider;
     }
     if (o.providerBaseUrl === null || typeof o.providerBaseUrl === "string") {

@@ -7,8 +7,12 @@ import {
   useThreadListItem,
 } from "@assistant-ui/react";
 import { useAISDKRuntime } from "@assistant-ui/react-ai-sdk";
-import type { ChatInit } from "ai";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import {
+  type ChatAddToolApproveResponseFunction,
+  type ChatInit,
+  lastAssistantMessageIsCompleteWithApprovalResponses,
+} from "ai";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AgentChatTransport } from "@/lib/agent-chat-transport";
 import { createAgentsThreadListAdapter } from "@/lib/agent-thread-list-adapter";
@@ -22,6 +26,9 @@ type Options<UI_MESSAGE extends UIMessage> = ChatInit<UI_MESSAGE> &
 
 function useChatThreadRuntimeBody<UI_MESSAGE extends UIMessage>(
   options?: Options<UI_MESSAGE>,
+  onAddToolApprovalResponse?: (
+    fn: ChatAddToolApproveResponseFunction,
+  ) => void,
 ) {
   const {
     adapters,
@@ -80,12 +87,21 @@ function useChatThreadRuntimeBody<UI_MESSAGE extends UIMessage>(
 
   const chat = useChat({
     ...chatOptions,
+    sendAutomaticallyWhen:
+      chatOptions.sendAutomaticallyWhen ??
+      lastAssistantMessageIsCompleteWithApprovalResponses,
     onFinish: onFinishWrapped,
     transport,
-  });
+    // Root `ai` vs `@ai-sdk/react`'s nested `ai` typings diverge (e.g. ChatTransport, schema types).
+  } as Parameters<typeof useChat<UI_MESSAGE>>[0]);
 
-  const { messages, setMessages } = chat;
+  const { messages, setMessages, addToolApprovalResponse } = chat;
   messagesRef.current = messages as UI_MESSAGE[];
+
+  useEffect(() => {
+    if (!onAddToolApprovalResponse) return;
+    onAddToolApprovalResponse(addToolApprovalResponse);
+  }, [addToolApprovalResponse, onAddToolApprovalResponse]);
 
   useEffect(() => {
     lastPersistedJsonRef.current = "";
@@ -147,11 +163,20 @@ export function useAgentChatRuntime<UI_MESSAGE extends UIMessage = UIMessage>(
   options?: Options<UI_MESSAGE>,
 ) {
   const adapter = useMemo(() => createAgentsThreadListAdapter(), []);
+  const [addToolApprovalResponse, setAddToolApprovalResponse] =
+    useState<ChatAddToolApproveResponseFunction>();
 
-  return unstable_useRemoteThreadListRuntime({
+  const runtime = unstable_useRemoteThreadListRuntime({
     runtimeHook: function RuntimeHook() {
-      return useChatThreadRuntimeBody(options);
+      return useChatThreadRuntimeBody(options, (fn) => {
+        setAddToolApprovalResponse(() => fn);
+      });
     },
     adapter,
   });
+
+  return {
+    runtime,
+    addToolApprovalResponse,
+  };
 }

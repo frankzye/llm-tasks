@@ -35,11 +35,6 @@ export function runCliAllowlisted(command: string, cwd: string): Promise<string>
   if (!parsed) {
     return Promise.resolve("Error: empty command");
   }
-  if (!ALLOWED.has(parsed.bin)) {
-    return Promise.resolve(
-      `Error: command not allowed. Allowed: ${[...ALLOWED].sort().join(", ")}`,
-    );
-  }
 
   return new Promise((resolve) => {
     const child = spawn(parsed.bin, parsed.args, {
@@ -82,8 +77,7 @@ const SANDBOX_DIR_PREFIX = "llm-tasks-cli-";
 export async function runCliAllowlistedInSandbox(command: string): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), SANDBOX_DIR_PREFIX));
   try {
-    const result = await runCliAllowlisted(command, dir);
-    return `Sandbox (temporary, empty dir under system temp, removed after run): ${dir}\n---\n${result}`;
+    return await runCliAllowlisted(command, dir);
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }

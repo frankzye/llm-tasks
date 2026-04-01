@@ -1,6 +1,6 @@
 "use client";
 
-import { useAssistantRuntime } from "@assistant-ui/react";
+import { useAui, useAuiState } from "@assistant-ui/react";
 import { Settings, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -8,28 +8,26 @@ import type { AgentConfig } from "@/lib/agent/agent-store";
 import { resolveMainAgentRemoteId } from "@/lib/main-agent-id";
 
 function useMainAgentRemoteId(): string | null {
-  const runtime = useAssistantRuntime();
+  const aui = useAui();
+  const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
+  const threadIdsKey = useAuiState((s) => s.threads.threadIds.join("|"));
   const [id, setId] = useState<string | null>(null);
 
   const sync = useCallback(() => {
+    const runtime = aui.threads().__internal_getAssistantRuntime?.();
+    if (!runtime) return;
     setId(resolveMainAgentRemoteId(runtime));
-  }, [runtime]);
+  }, [aui]);
 
   useEffect(() => {
     sync();
-    const u1 = runtime.threads.subscribe(sync);
-    const u2 = runtime.threads.mainItem.subscribe(sync);
-    return () => {
-      u1();
-      u2();
-    };
-  }, [runtime, sync]);
+  }, [sync, mainThreadId, threadIdsKey]);
 
   return id;
 }
 
 export function AgentSettingsTrigger() {
-  const runtime = useAssistantRuntime();
+  const aui = useAui();
   const agentId = useMainAgentRemoteId();
   const [open, setOpen] = useState(false);
 
@@ -38,6 +36,8 @@ export function AgentSettingsTrigger() {
       <button
         type="button"
         onClick={() => {
+          const runtime = aui.threads().__internal_getAssistantRuntime?.();
+          if (!runtime) return;
           const id = resolveMainAgentRemoteId(runtime);
           if (id) setOpen(true);
         }}
@@ -67,7 +67,7 @@ export function AgentSettingsModal({
   agentId: string;
   onClose: () => void;
 }) {
-  const runtime = useAssistantRuntime();
+  const aui = useAui();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -162,7 +162,10 @@ export function AgentSettingsModal({
         throw new Error(j.error ?? `Save failed (${r.status})`);
       }
       try {
-        await runtime.threads.getItemById(agentId).rename(form.name.trim() || "Agent");
+        const runtime = aui.threads().__internal_getAssistantRuntime?.();
+        if (runtime) {
+          await runtime.threads.getItemById(agentId).rename(form.name.trim() || "Agent");
+        }
       } catch {
         /* sidebar title best-effort */
       }

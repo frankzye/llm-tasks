@@ -1,11 +1,43 @@
+"use client";
+
 import type { AssistantRuntime, Tool } from "@assistant-ui/react";
 import {
   DefaultChatTransport,
+  type ChatAddToolApproveResponseFunction,
   type HttpChatTransportInitOptions,
   type JSONSchema7,
   type UIMessage,
 } from "ai";
+import {
+  createContext,
+  createElement,
+  useContext,
+  type ReactNode,
+} from "react";
 import { z } from "zod/v4";
+
+const AgentChatTransportContext = createContext<AgentChatTransport<UIMessage> | null>(
+  null,
+);
+
+/** Wrap the app (with the same `AgentChatTransport` instance passed to `useAgentChatRuntime`). */
+export function AgentChatTransportProvider({
+  transport,
+  children,
+}: {
+  transport: AgentChatTransport<UIMessage>;
+  children: ReactNode;
+}) {
+  return createElement(
+    AgentChatTransportContext.Provider,
+    { value: transport },
+    children,
+  );
+}
+
+export function useAgentChatTransport(): AgentChatTransport<UIMessage> | null {
+  return useContext(AgentChatTransportContext);
+}
 
 const toAISDKTools = (tools: Record<string, Tool>) => {
   return Object.fromEntries(
@@ -34,7 +66,9 @@ const getEnabledTools = (tools: Record<string, Tool>) => {
  * `thread.getModelContext().config.modelName` (assistant-ui ModelSelector).
  * `setRuntime` must be called (useChatRuntime only does this for AssistantChatTransport).
  */
-export class AgentChatTransport<UI_MESSAGE extends UIMessage> extends DefaultChatTransport<UI_MESSAGE> {
+export class AgentChatTransport<
+  UI_MESSAGE extends UIMessage = UIMessage,
+> extends DefaultChatTransport<UI_MESSAGE> {
   private runtime: AssistantRuntime | undefined;
 
   constructor(initOptions?: HttpChatTransportInitOptions<UI_MESSAGE>) {

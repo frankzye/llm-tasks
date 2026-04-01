@@ -11,8 +11,8 @@ import {
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  useAui,
   useAuiState,
-  useAssistantRuntime,
   AuiIf,
 } from "@assistant-ui/react";
 import {
@@ -31,26 +31,12 @@ import {
   RotateCw,
   MoreVertical,
 } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type FC,
-  type PropsWithChildren,
-} from "react";
+import { useCallback, useEffect, useMemo, useState, type FC } from "react";
 
 import {
   GeminiComposerAttachments,
   UserMessageAttachments,
 } from "@/components/assistant-ui/attachment";
-import { CliRunTool } from "@/components/assistant-ui/cli-run-tool";
-import {
-  MemoryRecallTool,
-  MemoryStoreTool,
-} from "@/components/assistant-ui/memory-tool";
-import { LoadSkillTool } from "@/components/assistant-ui/skill-tool";
-import { A2ASendTool } from "@/components/assistant-ui/a2a-tool";
 import { DefaultToolCard } from "@/components/assistant-ui/default-tool";
 import {
   AssistantMessageMarkdown,
@@ -59,17 +45,19 @@ import {
 import { ModelSelector } from "@/components/assistant-ui/model-selector";
 import { resolveMainAgentRemoteId } from "@/lib/main-agent-id";
 import {
-  ArrowDownIcon,
-  ArrowUpIcon,
   ChevronDownIcon,
   ChevronRightIcon,
-  SquareIcon,
 } from "lucide-react";
+import { ReasoningGroup, Reasoning } from "@/components/assistant-ui/reasoning";
+
+
 type SettingsApi = { chatModels?: string[]; defaultChatModel?: string };
 type AgentApi = { modelId?: string };
 
 function useRuntimeModelConfig() {
-  const runtime = useAssistantRuntime();
+  const aui = useAui();
+  const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
+  const threadIdsKey = useAuiState((s) => s.threads.threadIds.join("|"));
   const [models, setModels] = useState<Array<{ id: string; name: string }>>([
     { id: "qwen3.5:0.8b", name: "qwen3.5:0.8b" },
   ]);
@@ -77,6 +65,8 @@ function useRuntimeModelConfig() {
   const [agentId, setAgentId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    const runtime = aui.threads().__internal_getAssistantRuntime?.();
+    if (!runtime) return;
     const id = resolveMainAgentRemoteId(runtime);
     setAgentId(id);
     const settingsRes = await fetch("/api/settings").then((r) =>
@@ -102,17 +92,11 @@ function useRuntimeModelConfig() {
       }
     }
     setSelectedModel(chosen);
-  }, [runtime]);
+  }, [aui]);
 
   useEffect(() => {
     void load();
-    const u1 = runtime.threads.subscribe(() => void load());
-    const u2 = runtime.threads.mainItem.subscribe(() => void load());
-    return () => {
-      u1();
-      u2();
-    };
-  }, [runtime, load]);
+  }, [load, mainThreadId, threadIdsKey]);
 
   const onModelChange = useCallback(
     (next: string) => {
@@ -133,68 +117,6 @@ function useRuntimeModelConfig() {
 const actionBtnClass =
   "flex size-8 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#444746]/8 dark:text-[#c4c7c5] dark:hover:bg-[#c4c7c5]/8";
 
-
-const AssistantChainOfThought: FC = () => {
-  return (
-    <ChainOfThoughtPrimitive.Root className="rounded-xl border border-[#dadce0] bg-white/80 text-xs text-[#444746] dark:border-[#3c4043] dark:bg-[#1f2022] dark:text-[#c4c7c5]">
-      <ChainOfThoughtPrimitive.AccordionTrigger className="flex w-full cursor-pointer items-center gap-2 px-4 py-2 font-medium text-sm hover:bg-muted/50">
-        <AuiIf condition={(s) => s?.chainOfThought.collapsed}>
-          <ChevronRightIcon className="size-4 shrink-0" />
-        </AuiIf>
-        <AuiIf condition={(s) => !s?.chainOfThought.collapsed}>
-          <ChevronDownIcon className="size-4 shrink-0" />
-        </AuiIf>
-        Thinking
-      </ChainOfThoughtPrimitive.AccordionTrigger>
-      <AuiIf condition={(s) => !s.chainOfThought.collapsed}>
-        <ChainOfThoughtPrimitive.Parts>
-          {({ part }) => {
-            if (part.type === "reasoning")
-              return (
-                <PartLayout>
-                  <Reasoning {...part} />
-                </PartLayout>
-              );
-            return null;
-          }}
-        </ChainOfThoughtPrimitive.Parts>
-      </AuiIf>
-    </ChainOfThoughtPrimitive.Root>
-  );
-};
-
-const PartLayout: FC<PropsWithChildren> = ({ children }) => {
-  const partType = useAuiState((s) => s.part.type);
-  const [open, setOpen] = useState(true);
-
-  const label = partType === "reasoning" ? "Thinking" : "Taking action";
-
-  return (
-    <div className="border-t">
-      <button
-        type="button"
-        className="flex w-full cursor-pointer items-center gap-2 px-4 py-1.5 text-muted-foreground text-xs hover:bg-muted/50"
-        onClick={() => setOpen((o) => !o)}
-      >
-        {open ? (
-          <ChevronDownIcon className="size-3" />
-        ) : (
-          <ChevronRightIcon className="size-3" />
-        )}
-        {label}
-      </button>
-      {open && children}
-    </div>
-  );
-};
-
-const Reasoning: FC<{ text: string }> = ({ text }) => {
-  return (
-    <p className="whitespace-pre-wrap px-4 py-2 text-muted-foreground text-sm italic">
-      {text}
-    </p>
-  );
-};
 
 const ChatMessage: FC = () => {
   const role = useAuiState((s) => s.message.role);
@@ -217,16 +139,6 @@ const ChatMessage: FC = () => {
               <MessagePrimitive.Parts
                 components={{
                   Text: UserMessageMarkdown,
-                  tools: {
-                    by_name: {
-                      cli_run: CliRunTool,
-                      load_skill: LoadSkillTool,
-                      memory_store: MemoryStoreTool,
-                      memory_recall: MemoryRecallTool,
-                      a2a_send: A2ASendTool,
-                    },
-                    Fallback: DefaultToolCard,
-                  },
                 }}
               />
             </div>
@@ -250,8 +162,11 @@ const ChatMessage: FC = () => {
             <div className="flex flex-col gap-3 wrap-break-word text-sm leading-relaxed text-[#1f1f1f] dark:text-[#e3e3e3]">
               <MessagePrimitive.Parts
                 components={{
-                  ChainOfThought: AssistantChainOfThought,
-                  Text: AssistantMessageMarkdown,
+                  ReasoningGroup: ReasoningGroup,
+                  Reasoning: Reasoning,
+                  tools: {
+                    Fallback: DefaultToolCard,
+                  }
                 }}
               />
             </div>

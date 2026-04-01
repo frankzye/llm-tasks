@@ -3,12 +3,12 @@
 import {
   ThreadListItemPrimitive,
   ThreadListPrimitive,
-  useAssistantRuntime,
+  useAui,
   useThreadList,
   useThreadListItem,
   useThreadListItemRuntime,
 } from "@assistant-ui/react";
-import { Bot, MoreVertical, PanelLeftClose, PanelLeftOpen, Settings, Trash2 } from "lucide-react";
+import { Bot, Eraser, MoreVertical, PanelLeftClose, PanelLeftOpen, Settings, Trash2 } from "lucide-react";
 import { type FC, useEffect, useRef, useState } from "react";
 
 import { AgentSettingsModal } from "@/components/assistant-ui/agent-settings-panel";
@@ -22,7 +22,7 @@ const newAgentDraftActiveClasses =
 
 /** Explicit handler: `ThreadListPrimitive.New` can end up disabled or no-op in some runtimes. */
 const NewAgentButton: FC<{ className?: string }> = ({ className }) => {
-  const runtime = useAssistantRuntime();
+  const aui = useAui();
   const [mounted, setMounted] = useState(false);
   const [creating, setCreating] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -44,8 +44,10 @@ const NewAgentButton: FC<{ className?: string }> = ({ className }) => {
           setCreating(true);
           try {
             const agent = await createAgentOnServer("Agent");
+            const runtime = aui.threads().__internal_getAssistantRuntime?.();
+            if (!runtime) return;
             await reloadRemoteThreadList(runtime);
-            await runtime.threads.switchToThread(agent.id);
+            await aui.threads().switchToThread(agent.id);
           } catch (err) {
             console.error("[new agent]", err);
           } finally {
@@ -69,9 +71,11 @@ const agentRowKebabBtn =
 /** ⋮ menu: settings + delete. Only for persisted agents (not `__LOCALID_*` drafts). */
 const AgentRowMenu: FC<{
   remoteId: string;
+  isMain: boolean;
   menuOpen: boolean;
   onMenuOpenChange: (open: boolean) => void;
-}> = ({ remoteId, menuOpen, onMenuOpenChange }) => {
+}> = ({ remoteId, isMain, menuOpen, onMenuOpenChange }) => {
+  const aui = useAui();
   const itemRuntime = useThreadListItemRuntime();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -126,6 +130,37 @@ const AgentRowMenu: FC<{
             >
               <Settings className="size-4 shrink-0 opacity-70" />
               Settings
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className={menuItemClass}
+              onClick={(e) => {
+                e.stopPropagation();
+                onMenuOpenChange(false);
+                if (!window.confirm("Clear all messages for this agent?")) {
+                  return;
+                }
+                void fetch(`/api/agents/${encodeURIComponent(remoteId)}/messages`, {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ messages: [] }),
+                })
+                  .then((r) => {
+                    if (!r.ok) {
+                      throw new Error(`clear messages failed: ${r.status}`);
+                    }
+                    if (isMain) {
+                      aui.thread().reset([]);
+                    }
+                  })
+                  .catch((err) => {
+                    console.error("[clear messages]", err);
+                  });
+              }}
+            >
+              <Eraser className="size-4 shrink-0 opacity-70" />
+              Clear messages
             </button>
             <button
               type="button"
@@ -199,6 +234,7 @@ const ThreadListItem: FC = () => {
       {showMenu && remoteId ? (
         <AgentRowMenu
           remoteId={remoteId}
+          isMain={isMain}
           menuOpen={menuOpen}
           onMenuOpenChange={setMenuOpen}
         />

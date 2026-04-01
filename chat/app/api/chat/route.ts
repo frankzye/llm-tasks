@@ -48,6 +48,7 @@ import {
 } from "@/lib/global-skills-paths";
 import { getOpenAI } from "@/lib/openai-provider";
 import { getOllama } from "@/lib/ollama-provider";
+import { getDeepSeek } from "@/lib/deepseek-provider";
 
 async function pathExists(p: string): Promise<boolean> {
   try {
@@ -140,6 +141,11 @@ export async function POST(req: Request) {
           baseURL: providerBaseUrl,
           apiKey: providerApiKey,
         }).chat(modelId, { think: true })
+      : provider === "deepseek"
+        ? getDeepSeek({
+            baseURL: providerBaseUrl,
+            apiKey: providerApiKey,
+          }).chat(modelId)
       : getOpenAI({
           baseURL: providerBaseUrl,
           apiKey: providerApiKey,
@@ -389,7 +395,7 @@ export async function POST(req: Request) {
       }),
       cli_run: tool({
         description:
-          "Run a shell command in an isolated temp sandbox (not the project directory). If the command uses only the allowlisted binaries (pwd, echo, date, uname, whoami, hostname, wc, ls), it runs immediately. Otherwise the tool returns pending_approval and the user must approve in the UI (Run) before execution—see assistant-ui Tools / human-in-the-loop patterns.",
+          "Run a shell command in an isolated temp sandbox (not the project directory). If the command uses only the allowlisted binaries (pwd, echo, date, uname, whoami, hostname, wc, ls), it runs immediately. Otherwise the UI asks the user to approve execution (AI SDK tool execution approval) before the command runs.",
         inputSchema: zodSchema(
           z.object({
             command: z
@@ -397,16 +403,15 @@ export async function POST(req: Request) {
               .describe("Single command; allowlisted tools run at once, others wait for user Run in the chat UI."),
           }),
         ),
+        needsApproval: async ({ command }) =>
+          !isCliCommandAllowlisted(command.trim()),
         execute: async ({ command }) => {
           const cmd = command.trim();
           if (!cmd) {
             return { status: "error" as const, message: "empty command" };
           }
-          if (isCliCommandAllowlisted(cmd)) {
-            const output = await runCliAllowlistedInSandbox(cmd);
-            return { status: "completed" as const, output };
-          }
-          return { status: "pending_approval" as const, command: cmd };
+          const output = await runCliAllowlistedInSandbox(cmd);
+          return { status: "completed" as const, output };
         },
       }),
       a2a_send: tool({
