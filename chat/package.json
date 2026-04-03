@@ -1,12 +1,21 @@
 {
-  "name": "llm-tasks-chat",
+  "name": "@frankzye/llm-tasks",
   "version": "0.1.0",
   "private": false,
   "description": "Next.js chat UI with assistant-ui, AI SDK, agents, and skills",
+  "homepage": "https://github.com/frankzye/llm-tasks#readme",
+  "bugs": {
+    "url": "https://github.com/frankzye/llm-tasks/issues"
+  },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YOUR_GITHUB_USER/llm-tasks.git",
+    "url": "git+https://github.com/frankzye/llm-tasks.git",
     "directory": "chat"
+  },
+  "license": "MIT",
+  "author": "frankzye@qq.com",
+  "directories": {
+    "lib": "lib"
   },
   "scripts": {
     "dev": "next dev --turbopack",
