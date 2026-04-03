@@ -1,5 +1,5 @@
-import type { GlobalSettings } from "@/lib/global-settings";
-import type { ModelProviderConfig, ProviderKind } from "@/lib/global-settings";
+import type { GlobalSettings } from "./global-settings";
+import type { ModelProviderConfig, ProviderKind } from "./global-settings";
 
 /** Built-in fallback when settings do not define models yet. */
 export const FALLBACK_CHAT_MODELS = ["qwen3.5:0.8b"] as const;

@@ -1,6 +1,6 @@
 {
   "name": "@frankzye/llm-tasks",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "Next.js chat UI with assistant-ui, AI SDK, agents, and skills",
   "homepage": "https://github.com/frankzye/llm-tasks#readme",
@@ -16,6 +16,24 @@
   "author": "frankzye@qq.com",
   "directories": {
     "lib": "lib"
+  },
+  "main": "./lib/index.ts",
+  "types": "./lib/index.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.ts",
+      "import": "./lib/index.ts",
+      "default": "./lib/index.ts"
+    },
+    "./lib/*": "./lib/*",
+    "./components/*": "./components/*",
+    "./app/*": "./app/*",
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "next": ">=14.0.0",
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0"
   },
   "scripts": {
     "dev": "next dev --turbopack",

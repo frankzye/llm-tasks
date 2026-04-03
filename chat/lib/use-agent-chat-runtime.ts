@@ -14,8 +14,8 @@ import {
 } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { AgentChatTransport } from "@/lib/agent-chat-transport";
-import { createAgentsThreadListAdapter } from "@/lib/agent-thread-list-adapter";
+import { AgentChatTransport } from "./agent-chat-transport";
+import { createAgentsThreadListAdapter } from "./agent-thread-list-adapter";
 
 type AISDKRuntimeAdapterArg = NonNullable<Parameters<typeof useAISDKRuntime>[1]>;
 

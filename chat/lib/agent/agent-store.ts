@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { generateAgentName } from "@/lib/agent-name";
+import { generateAgentName } from "../agent-name";
 
 /** On-disk agent (one per chat thread). Used for config + per-agent skills. */
 export type AgentConfig = {

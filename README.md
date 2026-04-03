@@ -57,6 +57,35 @@ Optional Mem0-related variables are used when long-term memory is enabled (see c
 | `npm run lint` | ESLint |
 | `npm test` | Jest (if configured) |
 
+### Use as an npm dependency
+
+The published package exposes TypeScript entry points via `package.json` **`exports`** (see `chat/package.json`). Other teams can install it and import the public API:
+
+```bash
+npm install @frankzye/llm-tasks
+```
+
+In **your** Next.js app, add the package to `transpilePackages` so `node_modules` sources compile:
+
+```ts
+// next.config.ts
+const nextConfig = {
+  transpilePackages: ["@frankzye/llm-tasks"],
+};
+export default nextConfig;
+```
+
+```ts
+// Example
+import {
+  useAgentChatRuntime,
+  AgentChatTransport,
+  createAgentsThreadListAdapter,
+} from "@frankzye/llm-tasks";
+```
+
+Subpaths such as `@frankzye/llm-tasks/lib/agent-chat-transport` are also exported for advanced use.
+
 ### Publish to npm (CI)
 
 GitHub Actions workflow [`.github/workflows/npm-publish.yml`](.github/workflows/npm-publish.yml) installs, tests, and builds from `chat/`, then runs `npm publish`.

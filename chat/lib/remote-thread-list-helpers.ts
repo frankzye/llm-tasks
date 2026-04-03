@@ -1,5 +1,5 @@
 import type { AssistantRuntime } from "@assistant-ui/react";
-import { generateAgentName } from "@/lib/agent-name";
+import { generateAgentName } from "./agent-name";
 
 type RemoteThreadListCoreInternals = {
   _loadThreadsPromise?: Promise<void>;
