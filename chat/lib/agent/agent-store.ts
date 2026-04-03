@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { generateAgentName } from "@/lib/agent-name";
 
 /** On-disk agent (one per chat thread). Used for config + per-agent skills. */
 export type AgentConfig = {
@@ -14,6 +15,8 @@ export type AgentConfig = {
   maxTokens?: number;
   /** Selected chat model for this agent thread. */
   modelId?: string;
+  /** Selected model provider id for this agent thread. */
+  modelProviderId?: string;
   /** Last git URL used for skills sync (https only). */
   skillsGitUrl?: string;
   skillsGitLastSyncedAt?: string;
@@ -51,6 +54,10 @@ export function normalizeAgentConfig(
       typeof o.systemPrompt === "string" ? o.systemPrompt : undefined,
     maxTokens,
     modelId: typeof o.modelId === "string" ? o.modelId.trim() || undefined : undefined,
+    modelProviderId:
+      typeof o.modelProviderId === "string"
+        ? o.modelProviderId.trim() || undefined
+        : undefined,
     skillsGitUrl:
       typeof o.skillsGitUrl === "string" ? o.skillsGitUrl : undefined,
     skillsGitLastSyncedAt:
@@ -169,7 +176,7 @@ export async function listAgentsFromDisk(cwd: string): Promise<AgentConfig[]> {
 
 export async function createNewAgent(
   cwd: string,
-  name = "Agent",
+  name = generateAgentName(),
 ): Promise<AgentConfig> {
   const id = randomUUID();
   await ensureAgent(cwd, id);
@@ -191,6 +198,7 @@ export type AgentConfigPatch = {
   systemPrompt?: string | null;
   maxTokens?: number | null;
   modelId?: string | null;
+  modelProviderId?: string | null;
   skillsGitUrl?: string | null;
   skillsGitLastSyncedAt?: string;
   /** `null` clears restriction (use all catalog skills). */
@@ -231,6 +239,13 @@ export async function updateAgentConfigPartial(
       m === null || m === undefined || String(m).trim() === ""
         ? undefined
         : String(m).trim();
+  }
+  if ("modelProviderId" in patch) {
+    const p = patch.modelProviderId;
+    next.modelProviderId =
+      p === null || p === undefined || String(p).trim() === ""
+        ? undefined
+        : String(p).trim();
   }
   if ("skillsGitUrl" in patch) {
     const u = patch.skillsGitUrl;

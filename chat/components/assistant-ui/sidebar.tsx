@@ -43,7 +43,7 @@ const NewAgentButton: FC<{ className?: string }> = ({ className }) => {
         void (async () => {
           setCreating(true);
           try {
-            const agent = await createAgentOnServer("Agent");
+            const agent = await createAgentOnServer();
             const runtime = aui.threads().__internal_getAssistantRuntime?.();
             if (!runtime) return;
             await reloadRemoteThreadList(runtime);

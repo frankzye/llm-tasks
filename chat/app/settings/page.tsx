@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 
+import { CliAlwaysAllowTab } from "@/components/settings/cli-always-allow-tab";
 import { ModelSettingsTab } from "@/components/settings/model-settings-tab";
 import { SkillsSettingsTab } from "@/components/settings/skills-settings-tab";
 
@@ -14,7 +15,7 @@ const tabActive =
 const tabIdle = "text-[#5f6368] hover:bg-black/[0.04] dark:text-[#9aa0a6] dark:hover:bg-white/[0.06]";
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState<"general" | "skills">("skills");
+  const [tab, setTab] = useState<"general" | "cli" | "skills">("skills");
 
   return (
     <div className="min-h-[100dvh] bg-[#f8f9fa] dark:bg-[#0a0d12]">
@@ -41,6 +42,13 @@ export default function SettingsPage() {
         </button>
         <button
           type="button"
+          className={`${tabBtn} ${tab === "cli" ? tabActive : tabIdle}`}
+          onClick={() => setTab("cli")}
+        >
+          CLI run
+        </button>
+        <button
+          type="button"
           className={`${tabBtn} ${tab === "skills" ? tabActive : tabIdle}`}
           onClick={() => setTab("skills")}
         >
@@ -48,9 +56,11 @@ export default function SettingsPage() {
         </button>
       </div>
 
-      <main className="mx-auto max-w-2xl px-4 py-8">
+      <main className="mx-auto max-w-4xl px-4 py-8">
         {tab === "general" ? (
           <ModelSettingsTab />
+        ) : tab === "cli" ? (
+          <CliAlwaysAllowTab />
         ) : (
           <SkillsSettingsTab />
         )}

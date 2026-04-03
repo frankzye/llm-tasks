@@ -70,6 +70,7 @@ export class AgentChatTransport<
   UI_MESSAGE extends UIMessage = UIMessage,
 > extends DefaultChatTransport<UI_MESSAGE> {
   private runtime: AssistantRuntime | undefined;
+  private forcedThreadId: string | null = null;
 
   constructor(initOptions?: HttpChatTransportInitOptions<UI_MESSAGE>) {
     super({
@@ -77,16 +78,20 @@ export class AgentChatTransport<
       prepareSendMessagesRequest: async (options) => {
         const context = this.runtime?.thread.getModelContext();
         const modelName = context?.config?.modelName;
-        const threadId = this.runtime?.thread.getState().threadId;
+        const threadState = this.runtime?.thread.getState() as unknown as {
+          threadId?: string;
+        };
+        const runtimeThreadId = threadState?.threadId;
+        const threadId = this.forcedThreadId ?? runtimeThreadId;
 
         const optionsEx = {
           ...options,
           body: {
+            ...options?.body,
             system: context?.system,
             tools: toAISDKTools(getEnabledTools(context?.tools ?? {})),
             ...(modelName ? { model: modelName } : {}),
             ...(threadId ? { threadId } : {}),
-            ...options?.body,
           },
         };
         const preparedRequest =
@@ -108,5 +113,18 @@ export class AgentChatTransport<
 
   setRuntime(runtime: AssistantRuntime) {
     this.runtime = runtime;
+  }
+
+  /**
+   * Stable server-side agent id to send as `threadId` to /api/chat.
+   * This avoids SDK fallbacks like "DEFAULT_THREAD_ID" and local "__LOCALID_*" ids.
+   */
+  setForcedThreadId(threadId: string | null) {
+    const t = (threadId ?? "").trim();
+    if (!t || t === "DEFAULT_THREAD_ID" || t.startsWith("__LOCALID_")) {
+      this.forcedThreadId = null;
+      return;
+    }
+    this.forcedThreadId = t;
   }
 }

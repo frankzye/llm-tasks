@@ -1,6 +1,19 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { normalizeCliAlwaysAllowList } from "@/lib/agent/cli";
+
+export type ProviderKind = "openai" | "ollama" | "deepseek";
+
+export type ModelProviderConfig = {
+  /** Unique id used by agent selection (e.g. "openai-main"). */
+  id: string;
+  kind: ProviderKind;
+  baseUrl?: string | null;
+  apiKey?: string | null;
+  models: string[];
+};
+
 export type GlobalSettings = {
   skillsGitUrl?: string;
   skillsGitLastSyncedAt?: string;
@@ -16,6 +29,15 @@ export type GlobalSettings = {
   providerBaseUrl?: string | null;
   /** Provider API key/token. */
   providerApiKey?: string | null;
+  /** Multi-provider model configuration (preferred over legacy fields). */
+  modelProviders?: ModelProviderConfig[];
+  /** Default provider id for chat model fallback. */
+  defaultChatProvider?: string;
+  /**
+   * CLI program names (first token, e.g. `npm` for `npm run dev`) that skip cli_run approval.
+   * Managed from the chat CLI Run tool UI ("always allow").
+   */
+  cliAlwaysAllowCommands?: string[];
 };
 
 export function globalSettingsFilePath(cwd: string): string {
@@ -56,6 +78,63 @@ export async function readGlobalSettings(cwd: string): Promise<GlobalSettings> {
     if (o.providerApiKey === null || typeof o.providerApiKey === "string") {
       out.providerApiKey =
         typeof o.providerApiKey === "string" ? o.providerApiKey.trim() : null;
+    }
+    if (Array.isArray(o.modelProviders)) {
+      const providers: ModelProviderConfig[] = [];
+      for (const row of o.modelProviders) {
+        if (typeof row !== "object" || row === null) continue;
+        const r = row as Record<string, unknown>;
+        if (
+          typeof r.id !== "string" ||
+          !r.id.trim() ||
+          (r.kind !== "openai" && r.kind !== "ollama" && r.kind !== "deepseek")
+        ) {
+          continue;
+        }
+        const models = Array.isArray(r.models)
+          ? r.models
+              .filter((x): x is string => typeof x === "string")
+              .map((x) => x.trim())
+              .filter(Boolean)
+          : [];
+        providers.push({
+          id: r.id.trim(),
+          kind: r.kind,
+          baseUrl:
+            r.baseUrl === null || typeof r.baseUrl === "string"
+              ? (typeof r.baseUrl === "string" ? r.baseUrl.trim() : null)
+              : null,
+          apiKey:
+            r.apiKey === null || typeof r.apiKey === "string"
+              ? (typeof r.apiKey === "string" ? r.apiKey.trim() : null)
+              : null,
+          models: [...new Set(models)],
+        });
+      }
+      if (providers.length > 0) out.modelProviders = providers;
+    }
+    if (typeof o.defaultChatProvider === "string" && o.defaultChatProvider.trim()) {
+      out.defaultChatProvider = o.defaultChatProvider.trim();
+    }
+    if (Array.isArray(o.cliAlwaysAllowCommands)) {
+      const cmds = o.cliAlwaysAllowCommands.filter(
+        (x): x is string => typeof x === "string",
+      );
+      out.cliAlwaysAllowCommands = normalizeCliAlwaysAllowList(cmds);
+    }
+    if (!out.modelProviders || out.modelProviders.length === 0) {
+      const kind = out.provider ?? "openai";
+      const models = out.chatModels ?? ["qwen3.5:0.8b"];
+      out.modelProviders = [
+        {
+          id: kind,
+          kind,
+          baseUrl: out.providerBaseUrl ?? null,
+          apiKey: out.providerApiKey ?? null,
+          models,
+        },
+      ];
+      out.defaultChatProvider = kind;
     }
     return out;
   } catch {

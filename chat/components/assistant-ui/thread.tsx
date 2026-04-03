@@ -51,17 +51,32 @@ import {
 import { ReasoningGroup, Reasoning } from "@/components/assistant-ui/reasoning";
 
 
-type SettingsApi = { chatModels?: string[]; defaultChatModel?: string };
-type AgentApi = { modelId?: string };
+type SettingsApi = {
+  modelProviders?: Array<{
+    id: string;
+    kind: "openai" | "ollama" | "deepseek";
+    models: string[];
+  }>;
+  defaultChatProvider?: string;
+  defaultChatModel?: string;
+};
+type AgentApi = { modelId?: string; modelProviderId?: string };
+
+type ModelSelectionOption = { id: string; name: string; providerId: string; modelId: string };
 
 function useRuntimeModelConfig() {
   const aui = useAui();
   const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
   const threadIdsKey = useAuiState((s) => s.threads.threadIds.join("|"));
-  const [models, setModels] = useState<Array<{ id: string; name: string }>>([
-    { id: "qwen3.5:0.8b", name: "qwen3.5:0.8b" },
+  const [models, setModels] = useState<Array<ModelSelectionOption>>([
+    {
+      id: "openai::qwen3.5:0.8b",
+      name: "openai / qwen3.5:0.8b",
+      providerId: "openai",
+      modelId: "qwen3.5:0.8b",
+    },
   ]);
-  const [selectedModel, setSelectedModel] = useState("qwen3.5:0.8b");
+  const [selectedModel, setSelectedModel] = useState("openai::qwen3.5:0.8b");
   const [agentId, setAgentId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -72,13 +87,34 @@ function useRuntimeModelConfig() {
     const settingsRes = await fetch("/api/settings").then((r) =>
       r.ok
         ? (r.json() as Promise<SettingsApi>)
-        : { chatModels: ["qwen3.5:0.8b"] },
+        : {
+            modelProviders: [
+              { id: "openai", kind: "openai" as const, models: ["qwen3.5:0.8b"] },
+            ],
+            defaultChatProvider: "openai",
+            defaultChatModel: "qwen3.5:0.8b",
+          },
     );
-    const ids = settingsRes.chatModels?.filter(Boolean) ?? ["qwen3.5:0.8b"];
-    const nextModels = ids.map((m) => ({ id: m, name: m }));
+    const providers =
+      settingsRes.modelProviders?.filter((p) => p.id && p.models?.length) ?? [
+        { id: "openai", kind: "openai" as const, models: ["qwen3.5:0.8b"] },
+      ];
+    const nextModels = providers.flatMap((p) =>
+      p.models
+        .filter(Boolean)
+        .map((m) => ({
+          id: `${p.id}::${m}`,
+          name: `${p.kind} / ${m}`,
+          providerId: p.id,
+          modelId: m,
+        })),
+    );
     setModels(nextModels);
 
-    let chosen = settingsRes.defaultChatModel ?? ids[0];
+    const defaultProviderId = settingsRes.defaultChatProvider ?? providers[0]?.id ?? "openai";
+    const defaultModel =
+      settingsRes.defaultChatModel ?? providers.find((p) => p.id === defaultProviderId)?.models[0] ?? providers[0]?.models[0] ?? "qwen3.5:0.8b";
+    let chosen = `${defaultProviderId}::${defaultModel}`;
     if (id) {
       let agentRes: AgentApi = {};
       try {
@@ -87,8 +123,11 @@ function useRuntimeModelConfig() {
       } catch {
         /* ignore */
       }
-      if (agentRes.modelId && ids.includes(agentRes.modelId)) {
-        chosen = agentRes.modelId;
+      if (agentRes.modelId && agentRes.modelProviderId) {
+        const candidate = `${agentRes.modelProviderId}::${agentRes.modelId}`;
+        if (nextModels.some((m) => m.id === candidate)) {
+          chosen = candidate;
+        }
       }
     }
     setSelectedModel(chosen);
@@ -98,24 +137,51 @@ function useRuntimeModelConfig() {
     void load();
   }, [load, mainThreadId, threadIdsKey]);
 
+  useEffect(() => {
+    const onSettingsUpdated = () => {
+      void load();
+    };
+    const onFocus = () => {
+      void load();
+    };
+    window.addEventListener("settings-updated", onSettingsUpdated);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("settings-updated", onSettingsUpdated);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [load]);
+
   const onModelChange = useCallback(
     (next: string) => {
       setSelectedModel(next);
       if (!agentId) return;
+      const [providerId, ...modelParts] = next.split("::");
+      const modelId = modelParts.join("::");
+      if (!providerId || !modelId) return;
       void fetch(`/api/agents/${encodeURIComponent(agentId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ modelId: next }),
+        body: JSON.stringify({ modelProviderId: providerId, modelId }),
       }).catch(() => {});
     },
     [agentId],
   );
 
-  return { models, selectedModel, onModelChange };
+  const selectedModelEntry = models.find((m) => m.id === selectedModel);
+  return {
+    models,
+    selectedModel,
+    selectedModelContextValue: selectedModelEntry?.modelId ?? "qwen3.5:0.8b",
+    onModelChange,
+  };
 }
 
 const actionBtnClass =
   "flex size-8 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#444746]/8 dark:text-[#c4c7c5] dark:hover:bg-[#c4c7c5]/8";
+
+const chatContentWidth =
+  "w-full max-w-[min(1100px,calc(100vw-7rem))] xl:max-w-[min(1400px,calc(100vw-8rem))]";
 
 
 const ChatMessage: FC = () => {
@@ -123,7 +189,7 @@ const ChatMessage: FC = () => {
 
   if (role === "user") {
     return (
-      <MessagePrimitive.Root className="group/message relative mx-auto mb-4 flex w-full max-w-3xl flex-col pb-0.5">
+      <MessagePrimitive.Root className={`group/message relative mx-auto mb-4 flex ${chatContentWidth} flex-col pb-0.5`}>
         <div className="flex items-center justify-end gap-1">
           <ActionBarPrimitive.Root className="flex items-center gap-0.5 pt-1 opacity-0 transition-opacity group-focus-within/message:opacity-100 group-hover/message:opacity-100">
             <ActionBarPrimitive.Copy className={actionBtnClass}>
@@ -150,7 +216,7 @@ const ChatMessage: FC = () => {
 
   if (role === "assistant") {
     return (
-      <MessagePrimitive.Root className="group/message relative mx-auto mb-4 flex w-full max-w-3xl flex-col pb-0.5">
+      <MessagePrimitive.Root className={`group/message relative mx-auto mb-4 flex ${chatContentWidth} flex-col pb-0.5`}>
         <div className="flex items-start gap-3">
           <div
             className="mt-1 flex size-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#4285f4] to-[#9b72cb] text-[10px] text-white"
@@ -164,6 +230,7 @@ const ChatMessage: FC = () => {
                 components={{
                   ReasoningGroup: ReasoningGroup,
                   Reasoning: Reasoning,
+                  Text: AssistantMessageMarkdown,
                   tools: {
                     Fallback: DefaultToolCard,
                   }
@@ -214,13 +281,14 @@ const GeminiComposer: FC = () => {
   const isEmpty = useAuiState((s) => s.composer.isEmpty);
   const isRunning = useAuiState((s) => s.thread.isRunning);
   const hasAttachments = useAuiState((s) => s.composer.attachments.length > 0);
-  const { models, selectedModel, onModelChange } = useRuntimeModelConfig();
+  const { models, selectedModel, selectedModelContextValue, onModelChange } =
+    useRuntimeModelConfig();
 
   return (
     <ComposerPrimitive.Root
       data-empty={isEmpty}
       data-running={isRunning}
-      className="group/composer mx-auto flex w-full max-w-3xl flex-col rounded-[2rem] bg-white p-3 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.16)] dark:bg-[#1e1f20] dark:shadow-[0_2px_8px_-2px_rgba(0,0,0,0.5)]"
+      className={`group/composer mx-auto flex ${chatContentWidth} flex-col rounded-[2rem] bg-white p-3 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.16)] dark:bg-[#1e1f20] dark:shadow-[0_2px_8px_-2px_rgba(0,0,0,0.5)]`}
     >
       {hasAttachments ? (
         <div className="overflow-hidden rounded-t-3xl">
@@ -254,6 +322,7 @@ const GeminiComposer: FC = () => {
               <ModelSelector
                 models={models}
                 value={selectedModel}
+                contextValue={selectedModelContextValue}
                 onValueChange={onModelChange}
                 variant="outline"
                 className="w-full border-[#dadce0] text-xs dark:border-[#3c4043]"
@@ -286,7 +355,7 @@ export const Thread: FC = () => {
     <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col items-stretch bg-[#f8f9fa] dark:bg-[#131314]">
       <ThreadPrimitive.Empty>
         <div className="flex h-full min-h-0 flex-col justify-center px-4">
-          <div className="mx-auto w-full max-w-3xl">
+          <div className={`mx-auto ${chatContentWidth}`}>
             <div className="mb-1 flex items-center gap-3">
               <Sparkles
                 className="size-5 text-[#1a73e8] dark:text-[#8ab4f8]"
@@ -299,7 +368,7 @@ export const Thread: FC = () => {
             </p>
           </div>
           <GeminiComposer />
-          <div className="mx-auto mt-4 flex w-full max-w-3xl flex-wrap justify-center gap-2">
+          <div className={`mx-auto mt-4 flex ${chatContentWidth} flex-wrap justify-center gap-2`}>
             <SuggestionChip
               icon={<ImageIcon width={16} height={16} />}
               prompt="Describe this image idea: a calm mountain lake at sunrise."

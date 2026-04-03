@@ -19,7 +19,7 @@ export function createAgentsThreadListAdapter(): unstable_RemoteThreadListAdapte
         })),
       };
     },
-    async initialize(_threadId) {
+    async initialize(threadId) {
       const existing = await fetch("/api/agents");
       if (!existing.ok) throw new Error(`agents list failed: ${existing.status}`);
       const listed = (await existing.json()) as { agents: AgentRow[] };
@@ -27,15 +27,7 @@ export function createAgentsThreadListAdapter(): unstable_RemoteThreadListAdapte
       if (first?.id) {
         return { remoteId: first.id, externalId: first.id };
       }
-
-      const r = await fetch("/api/agents", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Agent" }),
-      });
-      if (!r.ok) throw new Error(`create agent failed: ${r.status}`);
-      const a = (await r.json()) as AgentRow;
-      return { remoteId: a.id, externalId: a.id };
+      return { remoteId: threadId, externalId: undefined };
     },
     async rename(remoteId, newTitle) {
       await fetch(`/api/agents/${encodeURIComponent(remoteId)}`, {

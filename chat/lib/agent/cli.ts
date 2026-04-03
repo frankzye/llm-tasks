@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -14,6 +14,7 @@ const ALLOWED = new Set([
   "wc",
   "ls",
 ]);
+const SHELL_META_RE = /[|&;<>()`$]/;
 
 function parseArgv(command: string): { bin: string; args: string[] } | null {
   const parts = command.trim().match(/(?:[^\s"]+|"[^"]*")+/g);
@@ -24,23 +25,78 @@ function parseArgv(command: string): { bin: string; args: string[] } | null {
   return { bin, args };
 }
 
+/** First token of the command line (the program name), e.g. `npm` from `npm run dev`. */
+export function extractCliBinary(command: string): string | null {
+  const parsed = parseArgv(command.trim());
+  const bin = parsed?.bin?.trim();
+  return bin && bin.length > 0 ? bin : null;
+}
+
+function allowListBinKey(bin: string): string {
+  return bin.trim().toLowerCase();
+}
+
+/** Program names only (first token per line); dedupe case-insensitively. */
+export function normalizeCliAlwaysAllowList(entries: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of entries) {
+    const t = raw.trim();
+    if (!t) continue;
+    const bin = extractCliBinary(t) ?? t.split(/\s+/)[0];
+    if (!bin?.trim()) continue;
+    const b = bin.trim();
+    const k = allowListBinKey(b);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(b);
+  }
+  return out;
+}
+
 export function isCliCommandAllowlisted(command: string): boolean {
   const parsed = parseArgv(command);
   if (!parsed) return false;
+  if (SHELL_META_RE.test(command)) return false;
   return ALLOWED.has(parsed.bin);
 }
 
+function normalizeAlwaysAllowCommand(command: string): string {
+  return command.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * True when the command's CLI binary (first token) is in the allow list, or when the full
+ * normalized line matches a legacy saved entry.
+ */
+export function isCliCommandInAlwaysAllowList(
+  command: string,
+  list: string[] | undefined,
+): boolean {
+  if (!list?.length) return false;
+  const bin = extractCliBinary(command);
+  if (bin) {
+    const key = allowListBinKey(bin);
+    const keys = new Set(list.map((e) => allowListBinKey(e)));
+    if (keys.has(key)) return true;
+  }
+  const full = normalizeAlwaysAllowCommand(command);
+  if (!full) return false;
+  return list.some((e) => normalizeAlwaysAllowCommand(e) === full);
+}
+
 export function runCliAllowlisted(command: string, cwd: string): Promise<string> {
-  const parsed = parseArgv(command);
-  if (!parsed) {
+  const trimmed = command.trim();
+  if (!trimmed) {
     return Promise.resolve("Error: empty command");
   }
 
   return new Promise((resolve) => {
-    const child = spawn(parsed.bin, parsed.args, {
+    const child = spawn(trimmed, {
       cwd,
-      shell: false,
+      shell: true,
       env: { ...process.env, PATH: process.env.PATH },
+      stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "";
     let err = "";
@@ -71,16 +127,17 @@ export function runCliAllowlisted(command: string, cwd: string): Promise<string>
 const SANDBOX_DIR_PREFIX = "llm-tasks-cli-";
 
 /**
- * Runs an allowlisted command in a fresh empty directory under the OS temp folder,
- * then deletes that directory. Avoids touching the project tree; each call is isolated.
+ * Runs an allowlisted command in a per-agent persistent sandbox directory under
+ * `.data/agents/<agentId>/`.
  */
-export async function runCliAllowlistedInSandbox(command: string): Promise<string> {
-  const dir = await mkdtemp(path.join(tmpdir(), SANDBOX_DIR_PREFIX));
-  try {
-    return await runCliAllowlisted(command, dir);
-  } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
-  }
+export async function runCliAllowlistedInSandbox(
+  command: string,
+  projectCwd: string,
+  agentId: string,
+): Promise<string> {
+  const dir = path.join(projectCwd, ".data", "agents", agentId, SANDBOX_DIR_PREFIX);
+  await mkdir(dir, { recursive: true });
+  return runCliAllowlisted(command, dir);
 }
 
 /**

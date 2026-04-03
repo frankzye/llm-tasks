@@ -45,6 +45,7 @@ function useChatThreadRuntimeBody<UI_MESSAGE extends UIMessage>(
   const storageKey =
     remoteId ??
     (threadId && !threadId.startsWith("__LOCALID_") ? threadId : null);
+  const apiThreadId = remoteId ?? storageKey;
 
   const loadSeqRef = useRef(0);
   const storageKeyRef = useRef<string | null>(null);
@@ -129,6 +130,10 @@ function useChatThreadRuntimeBody<UI_MESSAGE extends UIMessage>(
   }, [transport, runtime]);
 
   useEffect(() => {
+    transport.setForcedThreadId(apiThreadId ?? null);
+  }, [transport, apiThreadId]);
+
+  useEffect(() => {
     if (!storageKey || storageKey.startsWith("__LOCALID_")) return;
     const seq = ++loadSeqRef.current;
     let cancelled = false;
@@ -139,9 +144,10 @@ function useChatThreadRuntimeBody<UI_MESSAGE extends UIMessage>(
         const loaded = data.messages ?? [];
         if (loaded.length === 0) return;
         lastPersistedJsonRef.current = JSON.stringify(loaded);
-        setMessages((prev) =>
-          prev.length === 0 ? (loaded as UI_MESSAGE[]) : prev,
-        );
+        setMessages((prev) => {
+          const prevArr = Array.isArray(prev) ? prev : [];
+          return prevArr.length === 0 ? (loaded as UI_MESSAGE[]) : prevArr;
+        });
       })
       .catch((e) => {
         console.error("[conversation] load failed", e);

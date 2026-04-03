@@ -16,10 +16,11 @@ import type { JSONSchema7 } from "json-schema";
 import type { Message } from "mem0ai/oss";
 
 import { appendA2A } from "@/lib/agent/a2a";
-import { ensureAgent } from "@/lib/agent/agent-store";
+import { readAgentConfig } from "@/lib/agent/agent-store";
 import { autoCompactMessages } from "@/lib/agent/compaction";
 import {
   isCliCommandAllowlisted,
+  isCliCommandInAlwaysAllowList,
   runCliAllowlistedInSandbox,
 } from "@/lib/agent/cli";
 import {
@@ -38,6 +39,7 @@ import {
 } from "@/lib/agent/skills";
 import { getLastUserMessageText } from "@/lib/agent/ui-messages";
 import {
+  findProviderById,
   getDefaultChatModelFromSettings,
   isAllowedChatModel,
 } from "@/lib/chat-models";
@@ -115,14 +117,23 @@ export async function POST(req: Request) {
   } = await req.json();
 
   const cwd = process.cwd();
-  const { config: agentConfig } = await ensureAgent(cwd, rawThreadId ?? "default");
+  if (!rawThreadId || typeof rawThreadId !== "string" || !rawThreadId.trim()) {
+    return new Response("Not Found", { status: 404 });
+  }
+  if (rawThreadId.startsWith("__LOCALID_")) {
+    return new Response("Not Found", { status: 404 });
+  }
+  const agentConfig = await readAgentConfig(cwd, rawThreadId);
+  if (!agentConfig) {
+    return new Response("Not Found", { status: 404 });
+  }
   const agentId = agentConfig.id;
   const baseSystem = await getBaseSystem(cwd);
   const settings = await readGlobalSettings(cwd);
 
   const envDefault = process.env.DEFAULT_CHAT_MODEL?.trim();
   const settingsDefault = getDefaultChatModelFromSettings(settings);
-  const preferredDefault =
+  const preferredDefaultModel =
     agentConfig.modelId && isAllowedChatModel(agentConfig.modelId, settings)
       ? agentConfig.modelId
       : envDefault && isAllowedChatModel(envDefault, settings)
@@ -131,10 +142,16 @@ export async function POST(req: Request) {
   const modelId =
     requestedModel && isAllowedChatModel(requestedModel, settings)
       ? requestedModel
-      : preferredDefault;
-  const provider = settings.provider ?? "openai";
-  const providerBaseUrl = settings.providerBaseUrl ?? undefined;
-  const providerApiKey = settings.providerApiKey ?? undefined;
+      : preferredDefaultModel;
+  const selectedProvider = findProviderById(
+    settings,
+    agentConfig.modelProviderId,
+  );
+  const provider = selectedProvider?.kind ?? settings.provider ?? "openai";
+  const providerBaseUrl =
+    selectedProvider?.baseUrl ?? settings.providerBaseUrl ?? undefined;
+  const providerApiKey =
+    selectedProvider?.apiKey ?? settings.providerApiKey ?? undefined;
   const model =
     provider === "ollama"
       ? getOllama({
@@ -190,7 +207,7 @@ export async function POST(req: Request) {
 
   const compacted = await autoCompactMessages(messages, model, {
     maxChars: 14_000,
-    keepLast: 8,
+    keepLast: 30,
   });
 
   const lastUserText = getLastUserMessageText(messages);
@@ -211,12 +228,10 @@ export async function POST(req: Request) {
   const mergedSystem = [
     baseSystem,
     agentConfig.systemPrompt,
-    mem0Context,
     system,
-    compacted.systemAddendum,
   ]
     .filter(Boolean)
-    .join("\n\n");
+    .map((s) => ({ role: "system" as const, content: s ?? "" }));
 
   const dataDir = path.join(cwd, ".data");
 
@@ -395,7 +410,7 @@ export async function POST(req: Request) {
       }),
       cli_run: tool({
         description:
-          "Run a shell command in an isolated temp sandbox (not the project directory). If the command uses only the allowlisted binaries (pwd, echo, date, uname, whoami, hostname, wc, ls), it runs immediately. Otherwise the UI asks the user to approve execution (AI SDK tool execution approval) before the command runs.",
+          "Run any shell command or cli command.",
         inputSchema: zodSchema(
           z.object({
             command: z
@@ -403,14 +418,20 @@ export async function POST(req: Request) {
               .describe("Single command; allowlisted tools run at once, others wait for user Run in the chat UI."),
           }),
         ),
-        needsApproval: async ({ command }) =>
-          !isCliCommandAllowlisted(command.trim()),
+        needsApproval: async ({ command }) => {
+          const cmd = command.trim();
+          if (isCliCommandAllowlisted(cmd)) return false;
+          if (isCliCommandInAlwaysAllowList(cmd, settings.cliAlwaysAllowCommands)) {
+            return false;
+          }
+          return true;
+        },
         execute: async ({ command }) => {
           const cmd = command.trim();
           if (!cmd) {
             return { status: "error" as const, message: "empty command" };
           }
-          const output = await runCliAllowlistedInSandbox(cmd);
+          const output = await runCliAllowlistedInSandbox(cmd, cwd, agentId);
           return { status: "completed" as const, output };
         },
       }),

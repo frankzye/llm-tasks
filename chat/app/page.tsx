@@ -24,9 +24,6 @@ function ChatShell() {
         <AgentThreadBootstrap />
         <div className="flex h-[100dvh] flex-col">
           <header className="flex h-11 shrink-0 items-center gap-3 border-b border-[#e8eaed] bg-[#f8f9fa] px-4 dark:border-[#3c4043] dark:bg-[#131314]">
-            <span className="text-sm font-medium text-[#1f1f1f] dark:text-[#e3e3e3]">
-              LLM Tasks Agent
-            </span>
             <div className="ml-auto flex items-center gap-3">
               <Link
                 href="/settings"

@@ -110,6 +110,7 @@ function ModelSelectorTrigger({
 export type ModelSelectorProps = {
   models: ModelOption[];
   value?: string;
+  contextValue?: string;
   onValueChange?: (value: string) => void;
   defaultValue?: string;
   variant?: keyof typeof triggerVariants;
@@ -119,6 +120,7 @@ export type ModelSelectorProps = {
 
 const ModelSelectorImpl = ({
   value: controlledValue,
+  contextValue,
   onValueChange: controlledOnValueChange,
   defaultValue,
   models,
@@ -138,11 +140,11 @@ const ModelSelectorImpl = ({
   const aui = useAui();
 
   useEffect(() => {
-    const config = { config: { modelName: value } };
+    const config = { config: { modelName: contextValue ?? value } };
     return aui.modelContext().register({
       getModelContext: () => config,
     });
-  }, [aui, value]);
+  }, [aui, value, contextValue]);
 
   return (
     <ModelSelectorRoot models={models} value={value}>

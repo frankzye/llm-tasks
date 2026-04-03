@@ -53,6 +53,13 @@ export async function PATCH(req: Request, ctx: Ctx) {
       patch.modelId = body.modelId;
     }
   }
+  if ("modelProviderId" in body) {
+    if (body.modelProviderId === null) {
+      patch.modelProviderId = null;
+    } else if (typeof body.modelProviderId === "string") {
+      patch.modelProviderId = body.modelProviderId;
+    }
+  }
   if ("enabledSkillIds" in body) {
     if (body.enabledSkillIds === null) {
       patch.enabledSkillIds = null;
@@ -67,7 +74,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     return NextResponse.json(
       {
         error:
-          "No valid fields (name, systemPrompt, maxTokens, modelId, enabledSkillIds)",
+          "No valid fields (name, systemPrompt, maxTokens, modelId, modelProviderId, enabledSkillIds)",
       },
       { status: 400 },
     );

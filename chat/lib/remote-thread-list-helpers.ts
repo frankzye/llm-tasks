@@ -1,4 +1,5 @@
 import type { AssistantRuntime } from "@assistant-ui/react";
+import { generateAgentName } from "@/lib/agent-name";
 
 type RemoteThreadListCoreInternals = {
   _loadThreadsPromise?: Promise<void>;
@@ -22,7 +23,9 @@ export function reloadRemoteThreadList(runtime: AssistantRuntime): Promise<void>
   return listCore.getLoadThreadsPromise();
 }
 
-export async function createAgentOnServer(name = "Agent"): Promise<{ id: string }> {
+export async function createAgentOnServer(
+  name = generateAgentName(),
+): Promise<{ id: string }> {
   const r = await fetch("/api/agents", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

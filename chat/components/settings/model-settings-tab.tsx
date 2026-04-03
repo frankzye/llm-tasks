@@ -2,20 +2,31 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+type ProviderKind = "openai" | "ollama" | "deepseek";
+type ProviderRow = {
+  id: string;
+  kind: ProviderKind;
+  baseUrl: string;
+  apiKey: string;
+  modelsText: string;
+};
+
 type SettingsApi = {
-  chatModels?: string[];
+  modelProviders?: Array<{
+    id: string;
+    kind: ProviderKind;
+    baseUrl?: string | null;
+    apiKey?: string | null;
+    models: string[];
+  }>;
+  defaultChatProvider?: string;
   defaultChatModel?: string;
-  provider?: "openai" | "ollama" | "deepseek";
-  providerBaseUrl?: string | null;
-  providerApiKey?: string | null;
 };
 
 export function ModelSettingsTab() {
-  const [modelsText, setModelsText] = useState("");
+  const [providers, setProviders] = useState<ProviderRow[]>([]);
+  const [defaultProvider, setDefaultProvider] = useState("");
   const [defaultModel, setDefaultModel] = useState("");
-  const [provider, setProvider] = useState<"openai" | "ollama" | "deepseek">("openai");
-  const [providerBaseUrl, setProviderBaseUrl] = useState("");
-  const [providerApiKey, setProviderApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
@@ -23,18 +34,57 @@ export function ModelSettingsTab() {
   const parseModels = (text: string) =>
     [...new Set(text.split(/\r?\n/).map((x) => x.trim()).filter(Boolean))];
 
+  const kindLabel = (kind: ProviderKind) =>
+    kind === "openai" ? "OpenAI-compatible" : kind === "ollama" ? "Ollama" : "DeepSeek";
+
+  const nextProviderId = (kind: ProviderKind, rows: ProviderRow[]) => {
+    const base = kind;
+    if (!rows.some((r) => r.id === base)) return base;
+    let i = 2;
+    while (rows.some((r) => r.id === `${base}-${i}`)) i += 1;
+    return `${base}-${i}`;
+  };
+
+  const providerModelPairs = providers.flatMap((p) =>
+    parseModels(p.modelsText).map((m) => ({
+      value: `${p.id}::${m}`,
+      label: `${p.id} / ${m}`,
+      providerId: p.id,
+      modelId: m,
+    })),
+  );
+
   const load = useCallback(async () => {
     setErr(null);
     try {
       const r = await fetch("/api/settings");
       if (!r.ok) throw new Error(`Load failed (${r.status})`);
       const s = (await r.json()) as SettingsApi;
-      const models = s.chatModels ?? [];
-      setModelsText(models.join("\n"));
-      setDefaultModel(s.defaultChatModel ?? models[0] ?? "");
-      setProvider(s.provider ?? "openai");
-      setProviderBaseUrl(s.providerBaseUrl ?? "");
-      setProviderApiKey(s.providerApiKey ?? "");
+      const rows =
+        s.modelProviders?.map((p) => ({
+          id: p.id,
+          kind: p.kind,
+          baseUrl: p.baseUrl ?? "",
+          apiKey: p.apiKey ?? "",
+          modelsText: (p.models ?? []).join("\n"),
+        })) ?? [];
+      const fallback = rows.length
+        ? rows
+        : [
+            {
+              id: "openai",
+              kind: "openai" as const,
+              baseUrl: "",
+              apiKey: "",
+              modelsText: "qwen3.5:0.8b",
+            },
+          ];
+      setProviders(fallback);
+      const firstProviderId = s.defaultChatProvider ?? fallback[0]?.id ?? "openai";
+      setDefaultProvider(firstProviderId);
+      const firstModel =
+        s.defaultChatModel ?? parseModels(fallback.find((x) => x.id === firstProviderId)?.modelsText ?? "")[0] ?? "";
+      setDefaultModel(firstModel);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -44,37 +94,69 @@ export function ModelSettingsTab() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (providers.length === 0) return;
+    if (!providers.some((p) => p.id === defaultProvider)) {
+      setDefaultProvider(providers[0]!.id);
+      return;
+    }
+    const models =
+      providerModelPairs
+        .filter((x) => x.providerId === defaultProvider)
+        .map((x) => x.modelId) ?? [];
+    if (models.length === 0) return;
+    if (!models.includes(defaultModel)) {
+      setDefaultModel(models[0]!);
+    }
+  }, [providers, defaultProvider, defaultModel, providerModelPairs]);
+
   async function save() {
     setBusy(true);
     setErr(null);
     setOkMsg(null);
     try {
-      const models = parseModels(modelsText);
-      if (models.length === 0) {
-        throw new Error("Add at least one model id.");
+      const normalizedProviders = providers
+        .map((p) => ({
+          id: p.id.trim(),
+          kind: p.kind,
+          baseUrl: p.baseUrl.trim() || null,
+          apiKey: p.apiKey.trim() || null,
+          models: parseModels(p.modelsText),
+        }))
+        .filter((p) => p.id && p.models.length > 0);
+      if (normalizedProviders.length === 0) {
+        throw new Error("Add at least one provider with at least one model.");
       }
-      const normalizedDefault = defaultModel.trim() || models[0];
-      if (!models.includes(normalizedDefault)) {
-        throw new Error("Default model must be one of the model ids.");
-      }
+      const providerId = defaultProvider.trim() || normalizedProviders[0]!.id;
+      const providerModels =
+        normalizedProviders.find((p) => p.id === providerId)?.models ?? [];
+      const normalizedDefaultModel =
+        providerModels.includes(defaultModel.trim())
+          ? defaultModel.trim()
+          : providerModels[0] || normalizedProviders[0]!.models[0]!;
       const r = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          chatModels: models,
-          defaultChatModel: normalizedDefault,
-          provider,
-          providerBaseUrl: providerBaseUrl.trim() || null,
-          providerApiKey: providerApiKey.trim() || null,
+          modelProviders: normalizedProviders,
+          defaultChatProvider: providerId,
+          defaultChatModel: normalizedDefaultModel,
         }),
       });
       const next = (await r.json()) as SettingsApi & { error?: string };
       if (!r.ok) throw new Error(next.error ?? `Save failed (${r.status})`);
-      setModelsText((next.chatModels ?? models).join("\n"));
-      setDefaultModel(next.defaultChatModel ?? normalizedDefault);
-      setProvider(next.provider ?? provider);
-      setProviderBaseUrl(next.providerBaseUrl ?? providerBaseUrl);
-      setProviderApiKey(next.providerApiKey ?? providerApiKey);
+      const nextRows =
+        next.modelProviders?.map((p) => ({
+          id: p.id,
+          kind: p.kind,
+          baseUrl: p.baseUrl ?? "",
+          apiKey: p.apiKey ?? "",
+          modelsText: (p.models ?? []).join("\n"),
+        })) ?? providers;
+      setProviders(nextRows);
+      setDefaultProvider(next.defaultChatProvider ?? providerId);
+      setDefaultModel(next.defaultChatModel ?? normalizedDefaultModel);
+      window.dispatchEvent(new Event("settings-updated"));
       setOkMsg("Model settings saved.");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -84,89 +166,229 @@ export function ModelSettingsTab() {
   }
 
   return (
-    <div className="rounded-2xl border border-[#dadce0] bg-white p-4 dark:border-[#3c4043] dark:bg-[#131314]">
-      <h2 className="mb-3 text-sm font-semibold text-[#1f1f1f] dark:text-[#e3e3e3]">
-        Chat models
-      </h2>
-      <p className="mb-3 text-[12px] leading-relaxed text-[#70757a]">
-        One model id per line. These ids are shown in the chat model selector and
-        accepted by the server.
-      </p>
-      <textarea
-        rows={6}
-        value={modelsText}
-        onChange={(e) => setModelsText(e.target.value)}
-        placeholder={"qwen3.5:0.8b\nopenai/gpt-4o-mini"}
-        className="mb-3 w-full rounded-lg border border-[#dadce0] bg-[#f8f9fa] px-3 py-2 font-mono text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#0c0c0c] dark:text-[#e3e3e3]"
-      />
-      <label className="mb-3 block">
-        <span className="mb-1 block text-xs font-medium text-[#444746] dark:text-[#c4c7c5]">
-          Provider
-        </span>
-        <select
-          value={provider}
-          onChange={(e) =>
-            setProvider(e.target.value as "openai" | "ollama" | "deepseek")
-          }
-          className="w-full rounded-lg border border-[#dadce0] bg-[#f8f9fa] px-3 py-2 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#0c0c0c] dark:text-[#e3e3e3]"
-        >
-          <option value="openai">openai</option>
-          <option value="ollama">ollama</option>
-          <option value="deepseek">deepseek</option>
-        </select>
-      </label>
-      <label className="mb-3 block">
-        <span className="mb-1 block text-xs font-medium text-[#444746] dark:text-[#c4c7c5]">
-          Provider base URL
-        </span>
-        <input
-          value={providerBaseUrl}
-          onChange={(e) => setProviderBaseUrl(e.target.value)}
-          placeholder={
-            provider === "ollama"
-              ? "http://localhost:11434"
-              : provider === "deepseek"
-                ? "https://api.deepseek.com"
-                : "https://api.openai.com/v1"
-          }
-          className="w-full rounded-lg border border-[#dadce0] bg-[#f8f9fa] px-3 py-2 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#0c0c0c] dark:text-[#e3e3e3]"
-        />
-      </label>
-      <label className="mb-3 block">
-        <span className="mb-1 block text-xs font-medium text-[#444746] dark:text-[#c4c7c5]">
-          Provider API key
-        </span>
-        <input
-          type="password"
-          value={providerApiKey}
-          onChange={(e) => setProviderApiKey(e.target.value)}
-          placeholder="Optional"
-          className="w-full rounded-lg border border-[#dadce0] bg-[#f8f9fa] px-3 py-2 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#0c0c0c] dark:text-[#e3e3e3]"
-        />
-      </label>
-      <label className="mb-3 block">
-        <span className="mb-1 block text-xs font-medium text-[#444746] dark:text-[#c4c7c5]">
-          Default model
-        </span>
-        <input
-          value={defaultModel}
-          onChange={(e) => setDefaultModel(e.target.value)}
-          placeholder="Model id from list above"
-          className="w-full rounded-lg border border-[#dadce0] bg-[#f8f9fa] px-3 py-2 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#0c0c0c] dark:text-[#e3e3e3]"
-        />
-      </label>
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => void save()}
-        className="rounded-lg bg-[#1a73e8] px-4 py-2 text-sm font-medium text-white hover:bg-[#1557b0] disabled:opacity-50"
-      >
-        {busy ? "Saving…" : "Save models"}
-      </button>
-      {err ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{err}</p> : null}
-      {okMsg ? (
-        <p className="mt-3 text-sm text-[#137333] dark:text-[#81c995]">{okMsg}</p>
-      ) : null}
+    <div className="overflow-hidden rounded-2xl border border-[#dadce0] bg-white shadow-sm dark:border-[#3c4043] dark:bg-[#131314]">
+      <div className="border-b border-[#e8eaed] px-5 py-4 dark:border-[#34373b]">
+        <h2 className="text-base font-semibold text-[#1f1f1f] dark:text-[#e3e3e3]">
+          Model providers
+        </h2>
+        <p className="mt-1 text-sm text-[#70757a] dark:text-[#9aa0a6]">
+          Add one or more providers. Each has its own endpoint, key, and model list.
+        </p>
+      </div>
+
+      <div className="px-5 py-5">
+        <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-medium text-[#444746] dark:text-[#c4c7c5]">
+              Default provider
+            </span>
+            <select
+              value={defaultProvider}
+              onChange={(e) => setDefaultProvider(e.target.value)}
+              className="w-full rounded-xl border border-[#dadce0] bg-[#f8f9fa] px-3 py-2.5 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#0c0c0c] dark:text-[#e3e3e3]"
+            >
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.id} ({p.kind})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-medium text-[#444746] dark:text-[#c4c7c5]">
+              Default model
+            </span>
+            <select
+              value={defaultModel}
+              onChange={(e) => setDefaultModel(e.target.value)}
+              className="w-full rounded-xl border border-[#dadce0] bg-[#f8f9fa] px-3 py-2.5 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#0c0c0c] dark:text-[#e3e3e3]"
+            >
+              {providerModelPairs
+                .filter((x) => x.providerId === defaultProvider)
+                .map((x) => (
+                  <option key={x.value} value={x.modelId}>
+                    {x.modelId}
+                  </option>
+                ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-[#1f1f1f] dark:text-[#e3e3e3]">
+              Providers
+            </h3>
+            <p className="mt-0.5 text-xs text-[#70757a] dark:text-[#9aa0a6]">
+              Tip: paste models one-per-line. Provider IDs are auto-generated from the provider kind.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              setProviders((prev) => {
+                const kind: ProviderKind = "openai";
+                return [
+                  ...prev,
+                  {
+                    id: nextProviderId(kind, prev),
+                    kind,
+                    baseUrl: "",
+                    apiKey: "",
+                    modelsText: "",
+                  },
+                ];
+              })
+            }
+            className="shrink-0 rounded-xl border border-[#dadce0] bg-white px-3 py-2 text-sm font-medium text-[#1f1f1f] shadow-sm hover:bg-[#f1f3f4] dark:border-[#3c4043] dark:bg-[#131314] dark:text-[#e3e3e3] dark:hover:bg-white/10"
+          >
+            + Add provider
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-3">
+        {providers.map((p, idx) => (
+          <div
+            key={`${p.id}-${idx}`}
+            className="rounded-2xl border border-[#dadce0] bg-[#f8f9fa] p-4 shadow-sm dark:border-[#3c4043] dark:bg-[#0c0c0c]"
+          >
+            <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center rounded-full bg-[#e8f0fe] px-2 py-0.5 text-[11px] font-semibold text-[#174ea6] dark:bg-[#1e3a5f]/60 dark:text-[#8ab4f8]">
+                    {kindLabel(p.kind)}
+                  </span>
+                  <span className="text-xs text-[#70757a] dark:text-[#9aa0a6]">
+                    Provider ID{" "}
+                    <code className="rounded bg-black/[0.04] px-1 py-0.5 font-mono text-[11px] text-[#1f1f1f] dark:bg-white/10 dark:text-[#e3e3e3]">
+                      {p.id}
+                    </code>
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setProviders((prev) => prev.filter((_, i) => i !== idx))
+                }
+                className="self-start rounded-xl border border-red-300 bg-white px-3 py-2 text-sm font-medium text-red-700 shadow-sm hover:bg-red-50 dark:border-red-500/40 dark:bg-[#131314] dark:text-red-300 dark:hover:bg-red-900/20"
+              >
+                Remove
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <select
+                value={p.kind}
+                onChange={(e) =>
+                  setProviders((prev) => {
+                    const nextKind = e.target.value as ProviderKind;
+                    const others = prev.filter((_, i) => i !== idx);
+                    return prev.map((x, i) =>
+                      i === idx
+                        ? {
+                            ...x,
+                            kind: nextKind,
+                            id: nextProviderId(nextKind, others),
+                          }
+                        : x,
+                    );
+                  })
+                }
+                className="rounded-xl border border-[#dadce0] bg-white px-3 py-2.5 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#131314] dark:text-[#e3e3e3]"
+              >
+                <option value="openai">openai</option>
+                <option value="ollama">ollama</option>
+                <option value="deepseek">deepseek</option>
+              </select>
+            </div>
+
+            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-[#444746] dark:text-[#c4c7c5]">
+                  Base URL
+                </span>
+                <input
+                  value={p.baseUrl}
+                  onChange={(e) =>
+                    setProviders((prev) =>
+                      prev.map((x, i) =>
+                        i === idx ? { ...x, baseUrl: e.target.value } : x,
+                      ),
+                    )
+                  }
+                  placeholder={
+                    p.kind === "ollama"
+                      ? "http://localhost:11434 (optional)"
+                      : "https://… (optional)"
+                  }
+                  className="w-full rounded-xl border border-[#dadce0] bg-white px-3 py-2.5 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#131314] dark:text-[#e3e3e3]"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-[#444746] dark:text-[#c4c7c5]">
+                  API key
+                </span>
+                <input
+                  type="password"
+                  value={p.apiKey}
+                  onChange={(e) =>
+                    setProviders((prev) =>
+                      prev.map((x, i) =>
+                        i === idx ? { ...x, apiKey: e.target.value } : x,
+                      ),
+                    )
+                  }
+                  placeholder="Optional"
+                  className="w-full rounded-xl border border-[#dadce0] bg-white px-3 py-2.5 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#131314] dark:text-[#e3e3e3]"
+                />
+              </label>
+            </div>
+
+            <label className="mt-3 block">
+              <span className="mb-1.5 block text-xs font-medium text-[#444746] dark:text-[#c4c7c5]">
+                Models (one per line)
+              </span>
+              <textarea
+                rows={5}
+                value={p.modelsText}
+                onChange={(e) =>
+                  setProviders((prev) =>
+                    prev.map((x, i) =>
+                      i === idx ? { ...x, modelsText: e.target.value } : x,
+                    ),
+                  )
+                }
+                placeholder={"gpt-4.1-mini\nqwen3.5:0.8b"}
+                className="w-full resize-y rounded-xl border border-[#dadce0] bg-white px-3 py-2.5 font-mono text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#131314] dark:text-[#e3e3e3]"
+              />
+            </label>
+          </div>
+        ))}
+        </div>
+
+        <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void save()}
+            className="inline-flex items-center justify-center rounded-xl bg-[#1a73e8] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#1557b0] disabled:opacity-50"
+          >
+            {busy ? "Saving…" : "Save settings"}
+          </button>
+          <div className="text-sm">
+            {err ? (
+              <p className="text-red-600 dark:text-red-400">{err}</p>
+            ) : okMsg ? (
+              <p className="text-[#137333] dark:text-[#81c995]">{okMsg}</p>
+            ) : (
+              <p className="text-[#70757a] dark:text-[#9aa0a6]">
+                Saved changes apply immediately in the chat model selector.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import {
   createNewAgent,
   listAgentsFromDisk,
 } from "@/lib/agent/agent-store";
+import { generateAgentName } from "@/lib/agent-name";
 
 /**
  * GET: list agents on disk (may be empty).
@@ -17,7 +18,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const cwd = process.cwd();
-  let name = "Agent";
+  let name = generateAgentName();
   try {
     const body = (await req.json()) as { name?: string };
     if (typeof body?.name === "string" && body.name.trim()) {

@@ -4,7 +4,8 @@ import {
   type ToolCallMessagePartComponent,
   type ToolCallMessagePartProps,
 } from "@assistant-ui/react";
-import { Check, Loader2, TerminalSquare, X } from "lucide-react";
+import { BookmarkPlus, Check, Loader2, TerminalSquare, X } from "lucide-react";
+import { useState } from "react";
 import { useToolApprovalResponse } from "@/lib/tool-approval-response-context";
 
 function normalizeTerminalText(text: string): string {
@@ -49,11 +50,38 @@ function formatOutput(result: unknown): string {
   }
 }
 
+function commandFromArgsObject(args: unknown): string | null {
+  if (!args) return null;
+  if (typeof args === "string") return normalizeTerminalText(args);
+  if (typeof args !== "object") return null;
+  const rec = args as Record<string, unknown>;
+  const value = rec.command ?? rec.cmd ?? rec.input;
+  if (typeof value === "string" && value.trim().length > 0) {
+    return normalizeTerminalText(value);
+  }
+  return null;
+}
+
+/** During approval, `args` is sometimes empty; `argsText` has the JSON tool input. */
+function extractCommand(args: unknown, argsText?: string): string | null {
+  const direct = commandFromArgsObject(args);
+  if (direct) return direct;
+  const text = argsText?.trim();
+  if (!text) return null;
+  try {
+    return commandFromArgsObject(JSON.parse(text) as unknown);
+  } catch {
+    return null;
+  }
+}
+
 export const CliRunTool: ToolCallMessagePartComponent = (
   props: ToolCallMessagePartProps,
 ) => {
-  const { result, status, resume, interrupt } = props;
+  const { args, argsText, result, status, resume, interrupt } = props;
   const addToolApprovalResponse = useToolApprovalResponse();
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [savingAlwaysRun, setSavingAlwaysRun] = useState(false);
 
   const approvalId =
     interrupt?.type === "human" &&
@@ -64,12 +92,47 @@ export const CliRunTool: ToolCallMessagePartComponent = (
       ? interrupt.payload.id
       : undefined;
 
-  const onApprove = () => {
+  const command = extractCommand(args, argsText);
+  const hasCommand = Boolean(command?.trim());
+
+  const approveRun = () => {
     if (approvalId && addToolApprovalResponse) {
       void addToolApprovalResponse({ id: approvalId, approved: true });
       return;
     }
     resume(true);
+  };
+
+  const onApprove = () => {
+    setSaveErr(null);
+    approveRun();
+  };
+
+  const onAlwaysRun = async () => {
+    setSaveErr(null);
+    const cmd = command?.trim().replace(/\s+/g, " ");
+    if (!cmd) return;
+    setSavingAlwaysRun(true);
+    try {
+      const r = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ addCliAlwaysAllowCommand: cmd }),
+      });
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) {
+        setSaveErr(j.error ?? `Save failed (${r.status})`);
+        setSavingAlwaysRun(false);
+        return;
+      }
+      window.dispatchEvent(new Event("settings-updated"));
+    } catch (e) {
+      setSaveErr(e instanceof Error ? e.message : String(e));
+      setSavingAlwaysRun(false);
+      return;
+    }
+    setSavingAlwaysRun(false);
+    approveRun();
   };
 
   const onReject = () => {
@@ -96,28 +159,65 @@ export const CliRunTool: ToolCallMessagePartComponent = (
         </div>
       </div>
 
+      {command ? (
+        <div className="border-b border-[#e8eaed] bg-[#f8f9fb] px-3 py-2.5 dark:border-[#34373b] dark:bg-[#171b20]">
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5f6368] dark:text-[#9aa0a6]">
+            Command
+          </p>
+          <pre className="overflow-auto rounded-md bg-[#101317] px-2.5 py-2 font-mono text-xs text-[#d9e2ec]">
+            <span className="text-[#7ee787]">$ </span>
+            {command}
+          </pre>
+        </div>
+      ) : null}
+
       <pre className="max-h-72 overflow-auto bg-[#101317] px-3 py-2.5 font-mono text-xs leading-relaxed text-[#d9e2ec] dark:bg-[#0d1117]">
         {output}
       </pre>
 
       {waitingForApproval ? (
-        <div className="flex items-center justify-end gap-2 border-t border-[#e8eaed] px-3 py-2.5 dark:border-[#34373b]">
-          <button
-            type="button"
-            onClick={onReject}
-            className="inline-flex items-center gap-1.5 rounded-md border border-[#dadce0] bg-white px-3 py-1.5 text-xs font-medium text-[#3c4043] hover:bg-[#f1f3f4] dark:border-[#3c4043] dark:bg-[#1f2328] dark:text-[#c9d1d9] dark:hover:bg-[#262c36]"
-          >
-            <X className="size-3.5" />
-            Reject
-          </button>
-          <button
-            type="button"
-            onClick={onApprove}
-            className="inline-flex items-center gap-1.5 rounded-md bg-[#1a73e8] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#1765cc] dark:bg-[#2f81f7] dark:hover:bg-[#1f6feb]"
-          >
-            <Check className="size-3.5" />
-            Accept
-          </button>
+        <div className="flex flex-col gap-2 border-t border-[#e8eaed] px-3 py-2.5 dark:border-[#34373b]">
+          {saveErr ? (
+            <p className="text-[11px] text-red-600 dark:text-red-400">{saveErr}</p>
+          ) : null}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={onReject}
+              disabled={savingAlwaysRun}
+              className="inline-flex items-center gap-1.5 rounded-md border border-[#dadce0] bg-white px-3 py-1.5 text-xs font-medium text-[#3c4043] hover:bg-[#f1f3f4] disabled:opacity-50 dark:border-[#3c4043] dark:bg-[#1f2328] dark:text-[#c9d1d9] dark:hover:bg-[#262c36]"
+            >
+              <X className="size-3.5" />
+              Reject
+            </button>
+            <button
+              type="button"
+              disabled={savingAlwaysRun}
+              onClick={onApprove}
+              className="inline-flex items-center gap-1.5 rounded-md bg-[#1a73e8] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#1765cc] disabled:opacity-50 dark:bg-[#2f81f7] dark:hover:bg-[#1f6feb]"
+            >
+              <Check className="size-3.5" />
+              Accept
+            </button>
+            <button
+              type="button"
+              disabled={!hasCommand || savingAlwaysRun}
+              title="Save this command to settings and run; future runs skip approval"
+              onClick={() => void onAlwaysRun()}
+              className="inline-flex items-center gap-1.5 rounded-md border border-[#1a73e8]/40 bg-[#e8f0fe] px-3 py-1.5 text-xs font-semibold text-[#174ea6] hover:bg-[#d2e3fc] disabled:pointer-events-none disabled:opacity-45 dark:border-[#8ab4f8]/40 dark:bg-[#1e3a5f]/50 dark:text-[#8ab4f8] dark:hover:bg-[#1e3a5f]/80"
+            >
+              {savingAlwaysRun ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <BookmarkPlus className="size-3.5" />
+              )}
+              Always run
+            </button>
+          </div>
+          <p className="text-[11px] text-[#70757a] dark:text-[#9aa0a6]">
+            Always run saves the CLI program name (e.g. npm from npm run dev) to settings and approves
+            once; later runs of that program skip approval.
+          </p>
         </div>
       ) : running ? (
         <div className="flex items-center gap-2 border-t border-[#e8eaed] px-3 py-2 text-xs text-[#5f6368] dark:border-[#34373b] dark:text-[#9aa0a6]">
