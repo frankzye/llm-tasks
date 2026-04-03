@@ -12,6 +12,10 @@ This project is licensed under the [MIT License](LICENSE).
 
 A local-first assistant UI built with **Next.js**, **assistant-ui**, and the **Vercel AI SDK**. Agents are stored under `.data/agents/<id>/` (config, conversation, skills). Global settings live in `.data/global-settings.json`.
 
+### Example
+
+![Chat app screenshot](docs/image.png)
+
 ### Requirements
 
 - Node.js 20+ (recommended)
