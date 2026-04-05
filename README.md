@@ -100,23 +100,6 @@ const nextConfig = {
 export default nextConfig;
 ```
 
-Public surface area depends on what this package exports in `package.json`; prefer importing from documented entry points if `exports` is configured in a given release.
-
-### Publish to npm (CI)
-
-GitHub Actions [`.github/workflows/npm-publish.yml`](.github/workflows/npm-publish.yml) runs install, test, and build, then `npm publish` on tags matching `chat-v*` (e.g. `chat-v0.1.3`).
-
-1. Add an [npm automation token](https://docs.npmjs.com/creating-and-viewing-access-tokens) as repository secret **`NPM_TOKEN`**.
-2. Bump `version` in the root **`package.json`**.
-3. Create and push a `chat-v*` tag, or run the workflow manually.
-
-If `scripts/publish-chat-tag.sh` still references a removed `chat/package.json`, update it to read the root `package.json`, or tag manually:
-
-```bash
-git tag chat-v0.1.3
-git push origin chat-v0.1.3
-```
-
 ---
 
 ## Contributing
