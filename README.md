@@ -24,7 +24,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ### Example
 
-If you add a screenshot, place it at `docs/image.png` and uncomment or reference it here.
+![Chat app screenshot](docs/image.png)
 
 ### Requirements
 
