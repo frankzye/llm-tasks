@@ -19,7 +19,7 @@ This project is licensed under the [MIT License](LICENSE).
 ### Data directory
 
 - By default, persisted files use **`<cwd>/.data/`** (see `src/lib/data-root.ts`).
-- Override with env **`LLM-TASK-DATA-PATH`** (absolute or relative to `cwd`).
+- Override with env **`LLM_TASK_DATA_PATH`** (absolute or relative to `cwd`).
 
 ### Example
 
@@ -101,7 +101,7 @@ npm install -g @frankzye/llm-agent
 llm-agent
 ```
 
-Optional: **`PORT=8080 llm-agent`**, **`HOSTNAME=127.0.0.1`**. Data directory follows **`LLM-TASK-DATA-PATH`** / **`.data`** in the **current working directory** when the process runs (set `cwd` or env as needed).
+Optional: **`PORT=8080 llm-agent`**, **`HOSTNAME=127.0.0.1`**. Data directory follows **`LLM_TASK_DATA_PATH`** / **`.data`** in the **current working directory** when the process runs (set `cwd` or env as needed).
 
 ---
 

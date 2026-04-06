@@ -246,7 +246,7 @@ export async function runChatPost(body: ChatPostBody): Promise<Response> {
     compacted.systemAddendum,
   ]
     .filter(Boolean)
-    .map((s) => ({ role: "system" as const, content: s ?? "" }));
+    .join("\n\n");
 
   const dataDir = dataRootDir(cwd);
 
@@ -299,12 +299,11 @@ export async function runChatPost(body: ChatPostBody): Promise<Response> {
           z.object({
             query: z
               .string()
-              .describe("Search text using task words and skill concepts."),
-            limit: z.number().min(1).max(20).optional(),
+              .describe("Search text using task words and skill concepts.")
           }),
         ),
-        execute: async ({ query, limit }) => {
-          const hits = searchSkillsHybrid(query, skills, limit ?? 8);
+        execute: async ({ query }) => {
+          const hits = searchSkillsHybrid(query, skills, 8);
           return {
             hits,
             skillsInventory,

@@ -9,6 +9,7 @@ import {
   useThreadListItemRuntime,
 } from "@assistant-ui/react";
 import { Bot, Eraser, MoreVertical, PanelLeftClose, PanelLeftOpen, Settings, Trash2 } from "lucide-react";
+import { AlertDialog } from "radix-ui";
 import { type FC, useEffect, useRef, useState } from "react";
 
 import { AgentSettingsModal } from "@/src/components/assistant-ui/agent-settings-panel";
@@ -64,6 +65,21 @@ const NewAgentButton: FC<{ className?: string }> = ({ className }) => {
 const menuItemClass =
   "flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[#3c4043] hover:bg-black/[0.06] dark:text-[#e3e3e3] dark:hover:bg-white/10";
 
+const alertOverlayClass =
+  "fixed inset-0 z-[200] bg-black/40 data-[state=open]:animate-in data-[state=closed]:animate-out dark:bg-black/55";
+
+const alertContentClass =
+  "fixed left-1/2 top-1/2 z-[201] w-[min(90vw,22rem)] max-h-[85vh] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-[#dadce0] bg-white p-5 shadow-xl focus:outline-none dark:border-[#3c4043] dark:bg-[#1e1f20]";
+
+const alertBtnCancelClass =
+  "inline-flex items-center justify-center rounded-lg border border-[#dadce0] bg-white px-3 py-1.5 text-sm font-medium text-[#3c4043] transition-colors hover:bg-[#f1f3f4] dark:border-[#3c4043] dark:bg-[#2d2f31] dark:text-[#e3e3e3] dark:hover:bg-[#3c4043]";
+
+const alertBtnClearClass =
+  "inline-flex items-center justify-center rounded-lg bg-[#1a73e8] px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#1557b0] dark:bg-[#8ab4f8] dark:text-[#0a0d12] dark:hover:bg-[#a8c7fa]";
+
+const alertBtnDeleteClass =
+  "inline-flex items-center justify-center rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600";
+
 /** Icon-only control; row chrome (border/hover/active) lives on `ThreadListItemPrimitive.Root`. */
 const agentRowKebabBtn =
   "flex size-8 shrink-0 items-center justify-center rounded-md text-[#5f6368] transition-colors hover:text-[#1f1f1f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1a73e8]/35 focus-visible:ring-offset-1 focus-visible:ring-offset-[#f8f9fa] dark:text-[#bdc1c6] dark:hover:text-[#e8eaed] dark:focus-visible:ring-[#8ab4f8]/40 dark:focus-visible:ring-offset-[#0a0d12] group-data-[active=true]:text-[#174ea6] dark:group-data-[active=true]:text-[#8ab4f8]";
@@ -78,6 +94,9 @@ const AgentRowMenu: FC<{
   const aui = useAui();
   const itemRuntime = useThreadListItemRuntime();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<"clear" | "delete" | null>(
+    null,
+  );
   const wrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -138,25 +157,7 @@ const AgentRowMenu: FC<{
               onClick={(e) => {
                 e.stopPropagation();
                 onMenuOpenChange(false);
-                if (!window.confirm("Clear all messages for this agent?")) {
-                  return;
-                }
-                void fetch(`/api/agents/${encodeURIComponent(remoteId)}/messages`, {
-                  method: "PUT",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ messages: [] }),
-                })
-                  .then((r) => {
-                    if (!r.ok) {
-                      throw new Error(`clear messages failed: ${r.status}`);
-                    }
-                    if (isMain) {
-                      aui.thread().reset([]);
-                    }
-                  })
-                  .catch((err) => {
-                    console.error("[clear messages]", err);
-                  });
+                setConfirmAction("clear");
               }}
             >
               <Eraser className="size-4 shrink-0 opacity-70" />
@@ -169,16 +170,7 @@ const AgentRowMenu: FC<{
               onClick={(e) => {
                 e.stopPropagation();
                 onMenuOpenChange(false);
-                if (
-                  !window.confirm(
-                    "Delete this agent? Its folder and conversation will be removed.",
-                  )
-                ) {
-                  return;
-                }
-                void itemRuntime.delete().catch((err) => {
-                  console.error("[delete agent]", err);
-                });
+                setConfirmAction("delete");
               }}
             >
               <Trash2 className="size-4 shrink-0 opacity-70" />
@@ -194,6 +186,70 @@ const AgentRowMenu: FC<{
           onClose={() => setSettingsOpen(false)}
         />
       ) : null}
+
+      <AlertDialog.Root
+        open={confirmAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmAction(null);
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={alertOverlayClass} />
+          <AlertDialog.Content className={alertContentClass}>
+            <AlertDialog.Title className="text-base font-semibold text-[#1f1f1f] dark:text-[#e8eaed]">
+              {confirmAction === "clear"
+                ? "Clear all messages?"
+                : "Delete this agent?"}
+            </AlertDialog.Title>
+            <AlertDialog.Description className="mt-2 text-sm text-[#5f6368] dark:text-[#9aa0a6]">
+              {confirmAction === "clear"
+                ? "This removes all messages for this agent from the server."
+                : "This agent’s folder and conversation will be removed."}
+            </AlertDialog.Description>
+            <div className="mt-5 flex justify-end gap-2">
+              <AlertDialog.Cancel className={alertBtnCancelClass}>
+                Cancel
+              </AlertDialog.Cancel>
+              <AlertDialog.Action
+                className={
+                  confirmAction === "delete"
+                    ? alertBtnDeleteClass
+                    : alertBtnClearClass
+                }
+                onClick={() => {
+                  if (confirmAction === "clear") {
+                    void fetch(
+                      `/api/agents/${encodeURIComponent(remoteId)}/messages`,
+                      {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ messages: [] }),
+                      },
+                    )
+                      .then((r) => {
+                        if (!r.ok) {
+                          throw new Error(`clear messages failed: ${r.status}`);
+                        }
+                        if (isMain) {
+                          aui.thread().reset([]);
+                        }
+                      })
+                      .catch((err) => {
+                        console.error("[clear messages]", err);
+                      });
+                  } else if (confirmAction === "delete") {
+                    void itemRuntime.delete().catch((err) => {
+                      console.error("[delete agent]", err);
+                    });
+                  }
+                }}
+              >
+                {confirmAction === "clear" ? "Clear" : "Delete"}
+              </AlertDialog.Action>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
     </>
   );
 };
