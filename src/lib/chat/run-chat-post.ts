@@ -173,7 +173,7 @@ export async function runChatPost(body: ChatPostBody): Promise<Response> {
       : getOpenAI({
           baseURL: providerBaseUrl,
           apiKey: providerApiKey,
-        }).chat(modelId);
+        }).chatModel(modelId);
   const globalSkillsDir = globalSkillsDataDir(cwd);
   await fs.mkdir(/* turbopackIgnore: true */ globalSkillsDir, {
     recursive: true,
