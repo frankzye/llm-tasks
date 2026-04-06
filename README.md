@@ -15,7 +15,6 @@ This project is licensed under the [MIT License](LICENSE).
 - **Agents** — Each chat thread maps to `.data/agents/<id>/` with `config.json`, `conversation.json`, optional `skills/`, Mem0 data, and a per-agent **`task-board.json`** (task list the UI and model can update via [interactables](https://www.assistant-ui.com/docs/guides/interactables)).
 - **Skills** — Global catalog under the data root (`skills/`, `skills.json`), plus per-agent skills; configurable in **Settings** and agent settings.
 - **Chat API** — `POST /api/chat` runs the main agent pipeline (skills tools, Mem0, `cli_run` with approvals, `a2a_send`, compaction, etc.). Logic lives in `src/lib/chat/run-chat-post.ts`.
-- **Cron hook** — `POST /api/cron` returns lightweight stats (agent dirs, A2a inbox line count). When `CRON_SECRET` is set, require `Authorization: Bearer <secret>`.
 
 ### Data directory
 
@@ -64,7 +63,6 @@ Open [http://localhost:3000](http://localhost:3000) (or the port shown in the te
 | `GET` / `PUT` | `/api/agents/[id]/messages` | Load / save conversation JSON |
 | `GET` / `PUT` | `/api/agents/[id]/task-board` | Load / save `task-board.json` |
 | `GET` / `PATCH` | `/api/settings` | Global settings |
-| `POST` | `/api/cron` | External cron ping (optional `CRON_SECRET`) |
 
 ### Environment
 

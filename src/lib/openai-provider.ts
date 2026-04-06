@@ -1,4 +1,4 @@
-import { createOpenAI, } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 
 /**
  * OpenAI-compatible provider. Set `OPENAI_BASE_URL` for a custom gateway or proxy
@@ -9,10 +9,12 @@ import { createOpenAI, } from "@ai-sdk/openai";
  * with most local servers.
  */
 export function getOpenAI(overrides?: { baseURL?: string; apiKey?: string }) {
-  const baseURL = overrides?.baseURL?.trim() || process.env.OPENAI_BASE_URL?.trim();
+  const baseURL =
+    overrides?.baseURL?.trim() || process.env.OPENAI_BASE_URL?.trim();
   const apiKey = overrides?.apiKey?.trim() || process.env.OPENAI_API_KEY;
-  return createOpenAI({
+  return createOpenAICompatible({
+    name: "openai-compatible",
+    baseURL: baseURL ?? "",
     apiKey,
-    ...(baseURL ? { baseURL } : {}),
   });
 }
