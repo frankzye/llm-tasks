@@ -7,12 +7,16 @@ import {
 import { generateAgentName } from "@/src/lib/agent-name";
 
 /**
- * GET: list agents on disk (may be empty).
+ * GET: list agents on disk. If none exist yet, creates one default agent and returns it.
  * POST: create a new agent (e.g. "New agent" in the sidebar).
  */
 export async function GET() {
   const cwd = process.cwd();
-  const agents = await listAgentsFromDisk(cwd);
+  let agents = await listAgentsFromDisk(cwd);
+  if (agents.length === 0) {
+    await createNewAgent(cwd, generateAgentName());
+    agents = await listAgentsFromDisk(cwd);
+  }
   return NextResponse.json({ agents });
 }
 
