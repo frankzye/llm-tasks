@@ -1,6 +1,6 @@
 {
   "name": "@frankzye/llm-agent",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "description": "Next.js chat UI with assistant-ui, AI SDK, agents, and skills",
   "homepage": "https://github.com/frankzye/llm-tasks#readme",
