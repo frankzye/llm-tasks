@@ -23,13 +23,20 @@ function normalizeProviderConfigs(settings: GlobalSettings): ModelProviderConfig
     }))
     .filter((p) => p.id && p.models.length > 0);
   if (clean.length > 0) return clean;
+  /** Do not call `getChatModelsFromSettings` here — it uses `getProviderModelOptions` → this fn and overflows the stack. */
+  const fromSettings =
+    settings.chatModels?.map((m) => m.trim()).filter(Boolean) ?? [];
+  const models =
+    fromSettings.length > 0
+      ? [...new Set(fromSettings)]
+      : [...FALLBACK_CHAT_MODELS];
   return [
     {
       id: settings.provider ?? "openai",
       kind: settings.provider ?? "openai",
       baseUrl: settings.providerBaseUrl ?? null,
       apiKey: settings.providerApiKey ?? null,
-      models: getChatModelsFromSettings(settings),
+      models,
     },
   ];
 }

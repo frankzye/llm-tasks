@@ -2,11 +2,20 @@
 
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useState } from "react";
 
 import { CliAlwaysAllowTab } from "@/src/components/settings/cli-always-allow-tab";
 import { ModelSettingsTab } from "@/src/components/settings/model-settings-tab";
-import { SkillsSettingsTab } from "@/src/components/settings/skills-settings-tab";
+
+/** Client-only: avoids hydration mismatches when dev server RSC bundle lags behind the client (Skills tab is static help text + forms). */
+const SkillsSettingsTab = dynamic(
+  () =>
+    import("@/src/components/settings/skills-settings-tab").then(
+      (m) => m.SkillsSettingsTab,
+    ),
+  { ssr: false },
+);
 
 const tabBtn =
   "rounded-lg px-3 py-2 text-sm font-medium transition-colors";

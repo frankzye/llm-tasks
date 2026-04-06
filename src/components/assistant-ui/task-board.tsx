@@ -1,76 +1,50 @@
 "use client";
 
-import {
-  useAssistantInteractable,
-  useInteractableState,
-} from "@assistant-ui/react";
-import { Trash2 } from "lucide-react";
+import { RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { z } from "zod/v4";
 
 import { Button } from "@/src/components/ui/button";
 import { useMainAgentRemoteId } from "@/src/lib/use-main-agent-remote-id";
 
-const taskBoardZod = z.object({
-  tasks: z.array(
-    z.object({
-      id: z.string(),
-      title: z.string(),
-      done: z.boolean(),
-    }),
-  ),
-});
+type TaskBoardState = {
+  tasks: { id: string; title: string; done: boolean }[];
+};
 
-type TaskBoardState = z.infer<typeof taskBoardZod>;
-
-const taskBoardSchema = z.toJSONSchema(taskBoardZod);
-
-const taskBoardInitialState: TaskBoardState = { tasks: [] };
+const initial: TaskBoardState = { tasks: [] };
 
 /**
- * Per-agent task board (persisted under `.data/agents/<id>/task-board.json`).
- * The model can update via `update_taskBoard_<id>` when multiple interactables exist.
- * @see https://www.assistant-ui.com/docs/guides/interactables
+ * Right-sidebar task list for the current agent. Persists via
+ * `GET`/`PUT` `/api/agents/[id]/task-board` (same file as `read_task_board` /
+ * `update_task_board` in chat). Not rendered inside the message stream.
  */
 export function TaskBoard() {
   const remoteAgentId = useMainAgentRemoteId();
-  const interactableInstanceId = remoteAgentId ?? "draft";
-
-  const id = useAssistantInteractable("taskBoard", {
-    id: interactableInstanceId,
-    description:
-      "This agent's task board. Add, complete, or edit tasks when the user asks.",
-    stateSchema: taskBoardSchema as any,
-    initialState: taskBoardInitialState,
-  });
-  const [stateRaw, { setState }] = useInteractableState(
-    id,
-    taskBoardInitialState,
-  );
-  const state = stateRaw as TaskBoardState;
-
+  const [state, setState] = useState<TaskBoardState>(initial);
   const loadedKeyRef = useRef<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async (agentId: string) => {
+    setLoadError(null);
+    const r = await fetch(`/api/agents/${encodeURIComponent(agentId)}/task-board`);
+    if (!r.ok) throw new Error(`Load failed (${r.status})`);
+    const data = (await r.json()) as TaskBoardState;
+    setState({
+      tasks: Array.isArray(data.tasks) ? data.tasks : [],
+    });
+    loadedKeyRef.current = agentId;
+  }, []);
 
   useEffect(() => {
     if (!remoteAgentId) {
       loadedKeyRef.current = null;
+      setState(initial);
       return;
     }
     let cancelled = false;
-    setLoadError(null);
     void (async () => {
       try {
-        const r = await fetch(
-          `/api/agents/${encodeURIComponent(remoteAgentId)}/task-board`,
-        );
-        if (!r.ok) throw new Error(`Load failed (${r.status})`);
-        const data = (await r.json()) as TaskBoardState;
-        if (cancelled) return;
-        setState(() => ({
-          tasks: Array.isArray(data.tasks) ? data.tasks : [],
-        }));
-        loadedKeyRef.current = remoteAgentId;
+        await load(remoteAgentId);
       } catch (e) {
         if (!cancelled) {
           setLoadError(e instanceof Error ? e.message : String(e));
@@ -80,7 +54,26 @@ export function TaskBoard() {
     return () => {
       cancelled = true;
     };
-  }, [remoteAgentId, setState]);
+  }, [remoteAgentId, load]);
+
+  /** Keep UI in sync when the assistant updates tasks via chat tools (no server push). */
+  useEffect(() => {
+    if (!remoteAgentId) return;
+    const t = window.setInterval(() => {
+      void load(remoteAgentId).catch(() => undefined);
+    }, 10_000);
+    return () => window.clearInterval(t);
+  }, [remoteAgentId, load]);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible" && remoteAgentId) {
+        void load(remoteAgentId).catch(() => undefined);
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [remoteAgentId, load]);
 
   useEffect(() => {
     if (!remoteAgentId) return;
@@ -99,7 +92,19 @@ export function TaskBoard() {
 
   const clearBoard = useCallback(() => {
     setState({ tasks: [] });
-  }, [setState]);
+  }, []);
+
+  const onRefresh = useCallback(async () => {
+    if (!remoteAgentId) return;
+    setRefreshing(true);
+    try {
+      await load(remoteAgentId);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [remoteAgentId, load]);
 
   if (!remoteAgentId) {
     return (
@@ -119,20 +124,35 @@ export function TaskBoard() {
             Task board
           </h2>
           <p className="mt-0.5 text-[11px] leading-snug text-[#70757a] dark:text-[#80868b]">
-            Saved for this agent. The assistant can update via tools.
+            Synced to disk; the assistant can also use read_task_board / update_task_board.
           </p>
         </div>
-        {state.tasks.length > 0 ? (
+        <div className="flex shrink-0 items-center gap-1">
           <Button
             type="button"
             variant="ghost"
-            size="xs"
-            className="shrink-0 text-[#5f6368] hover:text-[#1f1f1f] dark:text-[#9aa0a6] dark:hover:text-[#e3e3e3]"
-            onClick={clearBoard}
+            size="icon-xs"
+            className="text-[#5f6368] hover:text-[#1f1f1f] dark:text-[#9aa0a6] dark:hover:text-[#e3e3e3]"
+            title="Refresh from server"
+            disabled={refreshing}
+            onClick={() => void onRefresh()}
           >
-            Clear all
+            <RefreshCw
+              className={`size-3.5 ${refreshing ? "animate-spin" : ""}`}
+            />
           </Button>
-        ) : null}
+          {state.tasks.length > 0 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="shrink-0 text-[#5f6368] hover:text-[#1f1f1f] dark:text-[#9aa0a6] dark:hover:text-[#e3e3e3]"
+              onClick={clearBoard}
+            >
+              Clear all
+            </Button>
+          ) : null}
+        </div>
       </div>
       {loadError ? (
         <p className="px-3 py-2 text-xs text-[#c5221f] dark:text-[#f28b82]">
@@ -142,7 +162,7 @@ export function TaskBoard() {
       <ul className="min-h-0 flex-1 overflow-y-auto p-2">
         {state.tasks.length === 0 ? (
           <li className="rounded-lg border border-dashed border-[#dadce0] px-3 py-6 text-center text-xs text-[#70757a] dark:border-[#3c4043] dark:text-[#9aa0a6]">
-            No tasks yet. Ask the assistant to add one.
+            No tasks yet. Ask the assistant to add one, or add tasks via chat tools.
           </li>
         ) : (
           state.tasks.map((task) => {
@@ -158,16 +178,13 @@ export function TaskBoard() {
                     className="mt-0.5 size-4 shrink-0 rounded border-[#dadce0] dark:border-[#5f6368]"
                     checked={done}
                     onChange={() =>
-                      setState((prev) => {
-                        const p = prev as TaskBoardState;
-                        return {
-                          tasks: p.tasks.map((t) =>
-                            t.id === task.id
-                              ? { ...t, done: !(t.done ?? false) }
-                              : t,
-                          ),
-                        };
-                      })
+                      setState((prev) => ({
+                        tasks: prev.tasks.map((t) =>
+                          t.id === task.id
+                            ? { ...t, done: !(t.done ?? false) }
+                            : t,
+                        ),
+                      }))
                     }
                   />
                   <span
@@ -187,12 +204,9 @@ export function TaskBoard() {
                   className="shrink-0 text-[#70757a] hover:text-[#c5221f] dark:text-[#9aa0a6] dark:hover:text-[#f28b82]"
                   aria-label="Delete task"
                   onClick={() =>
-                    setState((prev) => {
-                      const p = prev as TaskBoardState;
-                      return {
-                        tasks: p.tasks.filter((t) => t.id !== task.id),
-                      };
-                    })
+                    setState((prev) => ({
+                      tasks: prev.tasks.filter((t) => t.id !== task.id),
+                    }))
                   }
                 >
                   <Trash2 />

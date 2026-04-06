@@ -21,12 +21,20 @@ type SettingsApi = {
   }>;
   defaultChatProvider?: string;
   defaultChatModel?: string;
+  mem0OpenaiApiKey?: string | null;
+  mem0OpenaiBaseUrl?: string | null;
+  mem0LlmModel?: string | null;
+  mem0EmbedModel?: string | null;
 };
 
 export function ModelSettingsTab() {
   const [providers, setProviders] = useState<ProviderRow[]>([]);
   const [defaultProvider, setDefaultProvider] = useState("");
   const [defaultModel, setDefaultModel] = useState("");
+  const [mem0ApiKey, setMem0ApiKey] = useState("");
+  const [mem0BaseUrl, setMem0BaseUrl] = useState("");
+  const [mem0LlmModel, setMem0LlmModel] = useState("");
+  const [mem0EmbedModel, setMem0EmbedModel] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
@@ -85,6 +93,10 @@ export function ModelSettingsTab() {
       const firstModel =
         s.defaultChatModel ?? parseModels(fallback.find((x) => x.id === firstProviderId)?.modelsText ?? "")[0] ?? "";
       setDefaultModel(firstModel);
+      setMem0ApiKey(s.mem0OpenaiApiKey ?? "");
+      setMem0BaseUrl(s.mem0OpenaiBaseUrl ?? "");
+      setMem0LlmModel(s.mem0LlmModel ?? "");
+      setMem0EmbedModel(s.mem0EmbedModel ?? "");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -141,6 +153,10 @@ export function ModelSettingsTab() {
           modelProviders: normalizedProviders,
           defaultChatProvider: providerId,
           defaultChatModel: normalizedDefaultModel,
+          mem0OpenaiApiKey: mem0ApiKey.trim() || null,
+          mem0OpenaiBaseUrl: mem0BaseUrl.trim() || null,
+          mem0LlmModel: mem0LlmModel.trim() || null,
+          mem0EmbedModel: mem0EmbedModel.trim() || null,
         }),
       });
       const next = (await r.json()) as SettingsApi & { error?: string };
@@ -156,6 +172,10 @@ export function ModelSettingsTab() {
       setProviders(nextRows);
       setDefaultProvider(next.defaultChatProvider ?? providerId);
       setDefaultModel(next.defaultChatModel ?? normalizedDefaultModel);
+      setMem0ApiKey(next.mem0OpenaiApiKey ?? "");
+      setMem0BaseUrl(next.mem0OpenaiBaseUrl ?? "");
+      setMem0LlmModel(next.mem0LlmModel ?? "");
+      setMem0EmbedModel(next.mem0EmbedModel ?? "");
       window.dispatchEvent(new Event("settings-updated"));
       setOkMsg("Model settings saved.");
     } catch (e) {
@@ -365,6 +385,83 @@ export function ModelSettingsTab() {
             </label>
           </div>
         ))}
+        </div>
+
+        <div className="mt-8 border-t border-[#e8eaed] pt-8 dark:border-[#34373b]">
+          <h3 className="text-base font-semibold text-[#1f1f1f] dark:text-[#e3e3e3]">
+            Mem0 (long-term memory)
+          </h3>
+          <p className="mt-1 text-sm text-[#70757a] dark:text-[#9aa0a6]">
+            Optional overrides for embeddings and Mem0’s internal LLM. When empty,{" "}
+            <code className="rounded bg-black/[0.06] px-1 font-mono text-xs dark:bg-white/10">
+              OPENAI_API_KEY
+            </code>
+            ,{" "}
+            <code className="rounded bg-black/[0.06] px-1 font-mono text-xs dark:bg-white/10">
+              OPENAI_BASE_URL
+            </code>
+            , and{" "}
+            <code className="rounded bg-black/[0.06] px-1 font-mono text-xs dark:bg-white/10">
+              MEM0_LLM_MODEL
+            </code>
+            , and{" "}
+            <code className="rounded bg-black/[0.06] px-1 font-mono text-xs dark:bg-white/10">
+              MEM0_EMBED_MODEL
+            </code>{" "}
+            from the environment are used. Disable Mem0 with{" "}
+            <code className="rounded bg-black/[0.06] px-1 font-mono text-xs dark:bg-white/10">
+              MEM0_ENABLED=false
+            </code>
+            .
+          </p>
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <label className="block md:col-span-2">
+              <span className="mb-1.5 block text-xs font-medium text-[#444746] dark:text-[#c4c7c5]">
+                OpenAI API key (Mem0)
+              </span>
+              <input
+                type="password"
+                autoComplete="off"
+                value={mem0ApiKey}
+                onChange={(e) => setMem0ApiKey(e.target.value)}
+                placeholder="Same as OPENAI_API_KEY if unset"
+                className="w-full rounded-xl border border-[#dadce0] bg-white px-3 py-2.5 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#131314] dark:text-[#e3e3e3]"
+              />
+            </label>
+            <label className="block md:col-span-2">
+              <span className="mb-1.5 block text-xs font-medium text-[#444746] dark:text-[#c4c7c5]">
+                OpenAI base URL (Mem0)
+              </span>
+              <input
+                value={mem0BaseUrl}
+                onChange={(e) => setMem0BaseUrl(e.target.value)}
+                placeholder="e.g. https://api.openai.com/v1 or http://localhost:11434/v1"
+                className="w-full rounded-xl border border-[#dadce0] bg-white px-3 py-2.5 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#131314] dark:text-[#e3e3e3]"
+              />
+            </label>
+            <label className="block md:col-span-2">
+              <span className="mb-1.5 block text-xs font-medium text-[#444746] dark:text-[#c4c7c5]">
+                Mem0 LLM model
+              </span>
+              <input
+                value={mem0LlmModel}
+                onChange={(e) => setMem0LlmModel(e.target.value)}
+                placeholder="e.g. gpt-4.1-mini-2025-04-14 (same as MEM0_LLM_MODEL if unset)"
+                className="w-full rounded-xl border border-[#dadce0] bg-white px-3 py-2.5 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#131314] dark:text-[#e3e3e3]"
+              />
+            </label>
+            <label className="block md:col-span-2">
+              <span className="mb-1.5 block text-xs font-medium text-[#444746] dark:text-[#c4c7c5]">
+                Mem0 embedding model
+              </span>
+              <input
+                value={mem0EmbedModel}
+                onChange={(e) => setMem0EmbedModel(e.target.value)}
+                placeholder="e.g. text-embedding-3-small (same as MEM0_EMBED_MODEL if unset)"
+                className="w-full rounded-xl border border-[#dadce0] bg-white px-3 py-2.5 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#131314] dark:text-[#e3e3e3]"
+              />
+            </label>
+          </div>
         </div>
 
         <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

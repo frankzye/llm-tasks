@@ -2,16 +2,55 @@ import path from "node:path";
 import { Memory, type Message } from "mem0ai/oss";
 
 import { agentDataDir, sanitizeAgentId } from "@/src/lib/agent/agent-store";
+import type { GlobalSettings } from "@/src/lib/global-settings";
 
-/** One Mem0 client per agent; SQLite + vectors live under `.data/agents/<agentId>/mem0/`. */
+/** One Mem0 client per agent + config signature; SQLite + vectors under `.data/agents/<agentId>/mem0/`. */
 const memoryByAgentId = new Map<string, Memory>();
 
 export function agentMem0Dir(cwd: string, rawAgentId: string): string {
   return path.join(agentDataDir(cwd, rawAgentId), "mem0");
 }
 
-function mem0Enabled(): boolean {
-  return process.env.MEM0_ENABLED !== "false" && !!process.env.OPENAI_API_KEY?.trim();
+/**
+ * Resolves Mem0 OpenAI-compatible settings: saved global settings override env
+ * (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `MEM0_LLM_MODEL`, `MEM0_EMBED_MODEL`).
+ */
+export function resolveMem0OpenAIConfig(settings: GlobalSettings): {
+  apiKey: string;
+  baseURL?: string;
+  llmModel: string;
+  embedModel: string;
+} {
+  const apiKey =
+    settings.mem0OpenaiApiKey?.trim() ||
+    process.env.OPENAI_API_KEY?.trim() ||
+    "";
+  const baseUrlRaw =
+    settings.mem0OpenaiBaseUrl?.trim() ||
+    process.env.OPENAI_BASE_URL?.trim() ||
+    "";
+  const baseURL = baseUrlRaw || undefined;
+  const llmModel =
+    settings.mem0LlmModel?.trim() ||
+    process.env.MEM0_LLM_MODEL?.trim() ||
+    "gpt-4.1-mini-2025-04-14";
+  const embedModel =
+    settings.mem0EmbedModel?.trim() ||
+    process.env.MEM0_EMBED_MODEL?.trim() ||
+    "text-embedding-3-small";
+  return { apiKey, baseURL, llmModel, embedModel };
+}
+
+function mem0ConfigSignature(settings: GlobalSettings): string {
+  const c = resolveMem0OpenAIConfig(settings);
+  return `${c.apiKey}|${c.baseURL ?? ""}|${c.llmModel}|${c.embedModel}`;
+}
+
+export function mem0EnabledForSettings(settings: GlobalSettings): boolean {
+  return (
+    process.env.MEM0_ENABLED !== "false" &&
+    !!resolveMem0OpenAIConfig(settings).apiKey
+  );
 }
 
 /**
@@ -31,9 +70,13 @@ function parseEmbeddingDim(): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-function buildMemoryForAgent(cwd: string, sanitizedId: string): Memory {
-  const apiKey = process.env.OPENAI_API_KEY ?? "";
-  const baseURL = process.env.OPENAI_BASE_URL?.trim();
+function buildMemoryForAgent(
+  cwd: string,
+  sanitizedId: string,
+  settings: GlobalSettings,
+): Memory {
+  const { apiKey, baseURL, llmModel, embedModel } =
+    resolveMem0OpenAIConfig(settings);
   const root = agentMem0Dir(cwd, sanitizedId);
   const dim = parseEmbeddingDim();
 
@@ -44,9 +87,7 @@ function buildMemoryForAgent(cwd: string, sanitizedId: string): Memory {
       provider: "openai",
       config: {
         apiKey,
-        model:
-          process.env.MEM0_EMBED_MODEL ??
-          "text-embedding-3-small",
+        model: embedModel,
         ...(dim ? { embeddingDims: dim } : {}),
         ...(baseURL ? { baseURL } : {}),
       },
@@ -55,7 +96,6 @@ function buildMemoryForAgent(cwd: string, sanitizedId: string): Memory {
       provider: "memory",
       config: {
         collectionName: "memories",
-        // Omit dimension to let Mem0 probe the embedder, or set MEM0_EMBEDDING_DIM to match your model.
         ...(dim ? { dimension: dim } : {}),
         dbPath: path.join(root, "vector_store.db"),
       },
@@ -64,9 +104,7 @@ function buildMemoryForAgent(cwd: string, sanitizedId: string): Memory {
       provider: "openai",
       config: {
         apiKey,
-        model:
-          process.env.MEM0_LLM_MODEL ??
-          "gpt-4.1-mini-2025-04-14",
+        model: llmModel,
         ...(baseURL ? { baseURL } : {}),
       },
     },
@@ -77,15 +115,21 @@ function buildMemoryForAgent(cwd: string, sanitizedId: string): Memory {
  * [Mem0](https://github.com/mem0ai/mem0) OSS client for this agent only (isolated DB files).
  */
 export function getMemoryForAgent(
-  cwd = process.cwd(),
+  cwd: string,
   rawAgentId: string,
+  settings: GlobalSettings,
 ): Memory | null {
-  if (!mem0Enabled()) return null;
+  if (!mem0EnabledForSettings(settings)) return null;
   const id = sanitizeAgentId(rawAgentId);
-  let m = memoryByAgentId.get(id);
+  const sig = mem0ConfigSignature(settings);
+  const key = `${id}|${sig}`;
+  let m = memoryByAgentId.get(key);
   if (!m) {
-    m = buildMemoryForAgent(cwd, id);
-    memoryByAgentId.set(id, m);
+    for (const k of [...memoryByAgentId.keys()]) {
+      if (k.startsWith(`${id}|`)) memoryByAgentId.delete(k);
+    }
+    m = buildMemoryForAgent(cwd, id, settings);
+    memoryByAgentId.set(key, m);
   }
   return m;
 }
@@ -95,8 +139,9 @@ export async function searchMemoriesForAgent(
   rawAgentId: string,
   query: string,
   limit: number,
+  settings: GlobalSettings,
 ): Promise<{ memory: string; score?: number }[]> {
-  const m = getMemoryForAgent(cwd, rawAgentId);
+  const m = getMemoryForAgent(cwd, rawAgentId, settings);
   if (!m || !query.trim()) return [];
   const agentId = sanitizeAgentId(rawAgentId);
   const res = await m.search(query, { agentId, limit });
@@ -107,9 +152,14 @@ export async function addExplicitMemory(
   cwd: string,
   rawAgentId: string,
   text: string,
+  settings: GlobalSettings,
 ): Promise<void> {
-  const m = getMemoryForAgent(cwd, rawAgentId);
-  if (!m) throw new Error("Mem0 is disabled (set OPENAI_API_KEY and MEM0_ENABLED).");
+  const m = getMemoryForAgent(cwd, rawAgentId, settings);
+  if (!m) {
+    throw new Error(
+      "Mem0 is disabled (set API key in Settings → Mem0 or OPENAI_API_KEY, and MEM0_ENABLED not false).",
+    );
+  }
   const agentId = sanitizeAgentId(rawAgentId);
   const messages: Message[] = [{ role: "user", content: text }];
   await m.add(messages, { agentId, infer: mem0Infer() });
@@ -119,8 +169,9 @@ export async function addConversationToAgentMemory(
   cwd: string,
   rawAgentId: string,
   messages: Message[],
+  settings: GlobalSettings,
 ): Promise<void> {
-  const m = getMemoryForAgent(cwd, rawAgentId);
+  const m = getMemoryForAgent(cwd, rawAgentId, settings);
   if (!m || messages.length === 0) return;
   const agentId = sanitizeAgentId(rawAgentId);
   await m.add(messages, { agentId, infer: mem0Infer() });

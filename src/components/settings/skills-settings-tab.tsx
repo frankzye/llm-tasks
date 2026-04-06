@@ -5,6 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 type SettingsApi = {
   skillsGitUrl?: string;
   skillsGitLastSyncedAt?: string;
+  skillsZipUrl?: string;
+  skillsZipLastImportedAt?: string;
   skillsFolderPath?: string | null;
 };
 
@@ -18,9 +20,11 @@ type CatalogSkill = {
 export function SkillsSettingsTab() {
   const [settings, setSettings] = useState<SettingsApi | null>(null);
   const [gitUrl, setGitUrl] = useState("");
+  const [zipUrl, setZipUrl] = useState("");
   const [folderPath, setFolderPath] = useState("");
   const [runtimePath, setRuntimePath] = useState("");
   const [gitBusy, setGitBusy] = useState(false);
+  const [zipBusy, setZipBusy] = useState(false);
   const [folderBusy, setFolderBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
   const [catalogSkills, setCatalogSkills] = useState<CatalogSkill[]>([]);
@@ -55,6 +59,7 @@ export function SkillsSettingsTab() {
       const s = (await r.json()) as SettingsApi;
       setSettings(s);
       setGitUrl(s.skillsGitUrl ?? "");
+      setZipUrl(s.skillsZipUrl ?? "");
       setRuntimePath(s.skillsFolderPath ?? "");
       await loadCatalog();
     } catch (e) {
@@ -80,6 +85,38 @@ export function SkillsSettingsTab() {
       setSelectedSkillIds(new Set(catalogSkills.map((s) => s.id)));
     } else {
       setSelectedSkillIds(new Set());
+    }
+  }
+
+  async function installFromZip() {
+    if (!zipUrl.trim()) {
+      setErr("Enter an https:// URL that serves a .zip file.");
+      return;
+    }
+    setZipBusy(true);
+    setErr(null);
+    setOkMsg(null);
+    try {
+      const r = await fetch("/api/settings/skills/zip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zipUrl: zipUrl.trim() }),
+      });
+      const j = (await r.json().catch(() => ({}))) as {
+        error?: string;
+        settings?: SettingsApi;
+        folderName?: string;
+      };
+      if (!r.ok) throw new Error(j.error ?? `Install from zip failed (${r.status})`);
+      if (j.settings) setSettings(j.settings);
+      const sub = j.folderName ? `skills/${j.folderName}/` : "skills/<name>/";
+      setOkMsg(`Zip extracted to ${sub} under the data root.`);
+      await loadCatalog();
+      setSelectedSkillIds(new Set());
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setZipBusy(false);
     }
   }
 
@@ -209,7 +246,11 @@ export function SkillsSettingsTab() {
         <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">
           from-folder/
         </code>{" "}
-        is never removed by Git. Optional legacy repo{" "}
+        and zip installs (each under{" "}
+        <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">
+          {"<zip-basename>/"}
+        </code>
+        ) are never removed by Git. Optional legacy repo{" "}
         <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">
           skills/
         </code>
@@ -232,7 +273,7 @@ export function SkillsSettingsTab() {
           </strong>{" "}
           link (GitHub / Gitee):{" "}
           <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">
-            …/owner/repo/tree/&lt;branch&gt;/&lt;folder/path&gt;
+            {"…/owner/repo/tree/<branch>/<folder/path>"}
           </code>
           . Root URLs default to branch{" "}
           <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">main</code>{" "}
@@ -258,6 +299,60 @@ export function SkillsSettingsTab() {
           {settings?.skillsGitLastSyncedAt ? (
             <span className="text-xs text-[#70757a]">
               Last added: {settings.skillsGitLastSyncedAt}
+            </span>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-[#dadce0] bg-white p-4 dark:border-[#3c4043] dark:bg-[#131314]">
+        <h2 className="mb-3 text-sm font-semibold text-[#1f1f1f] dark:text-[#e3e3e3]">
+          Install from zip URL
+        </h2>
+        <p className="mb-3 text-[12px] leading-relaxed text-[#70757a]">
+          HTTPS only. Paste a direct download link to a skill package (for example{" "}
+          <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">
+            web-search-1.0.0.zip
+          </code>
+          ). If your browser shows a{" "}
+          <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">
+            blob:https://...
+          </code>{" "}
+          URL, paste it as-is — the server strips the{" "}
+          <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">blob:</code>{" "}
+          prefix and downloads{" "}
+          <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">
+            https://...
+          </code>
+          . The archive is unpacked into{" "}
+          <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">
+            {"skills/<zip-basename>/"}
+          </code>{" "}
+          (same name as the{" "}
+          <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">.zip</code>{" "}
+          file, from the URL path or{" "}
+          <code className="rounded bg-black/[0.06] px-1 dark:bg-white/10">
+            Content-Disposition
+          </code>
+          ; replaces that folder if it already exists).
+        </p>
+        <input
+          value={zipUrl}
+          onChange={(e) => setZipUrl(e.target.value)}
+          placeholder="https://example.com/path/to/skill.zip"
+          className="mb-3 w-full rounded-lg border border-[#dadce0] bg-[#f8f9fa] px-3 py-2 text-sm text-[#1f1f1f] outline-none focus:ring-2 focus:ring-[#1a73e8] dark:border-[#3c4043] dark:bg-[#0c0c0c] dark:text-[#e3e3e3]"
+        />
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            disabled={zipBusy}
+            onClick={() => void installFromZip()}
+            className="rounded-lg bg-[#1a73e8] px-4 py-2 text-sm font-medium text-white hover:bg-[#1557b0] disabled:opacity-50"
+          >
+            {zipBusy ? "Downloading…" : "Install from zip URL"}
+          </button>
+          {settings?.skillsZipLastImportedAt ? (
+            <span className="text-xs text-[#70757a]">
+              Last installed: {settings.skillsZipLastImportedAt}
             </span>
           ) : null}
         </div>

@@ -12,7 +12,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## App overview
 
-- **Agents** — Each chat thread maps to `.data/agents/<id>/` with `config.json`, `conversation.json`, optional `skills/`, Mem0 data, and a per-agent **`task-board.json`** (task list the UI and model can update via [interactables](https://www.assistant-ui.com/docs/guides/interactables)).
+- **Agents** — Each chat thread maps to `.data/agents/<id>/` with `config.json`, `conversation.json`, optional `skills/`, Mem0 data, and a per-agent **`task-board.json`** (todo list updated via chat tools `read_task_board` / `update_task_board` in `/api/chat`).
 - **Skills** — Global catalog under the data root (`skills/`, `skills.json`), plus per-agent skills; configurable in **Settings** and agent settings.
 - **Chat API** — `POST /api/chat` runs the main agent pipeline (skills tools, Mem0, `cli_run` with approvals, `a2a_send`, compaction, etc.). Logic lives in `src/lib/chat/run-chat-post.ts`.
 
@@ -51,7 +51,7 @@ Open [http://localhost:3000](http://localhost:3000) (or the port shown in the te
 | `.data/a2a-inbox.jsonl` | A2A message log (when used) |
 | `src/app/api/chat/route.ts` | Thin wrapper; delegates to `runChatPost` |
 | `src/app/settings/page.tsx` | Global settings UI (models, CLI allowlist, skills) |
-| `src/components/assistant-ui/task-board.tsx` | Per-agent task board UI |
+| `src/lib/chat/run-chat-post.ts` | `read_task_board` / `update_task_board` tools (persist `task-board.json`) |
 
 ### HTTP API (selected)
 

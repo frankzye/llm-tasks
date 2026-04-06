@@ -128,6 +128,34 @@ export async function PATCH(req: Request) {
     );
     patch.cliAlwaysAllowCommands = normalizeCliAlwaysAllowList(cmds);
   }
+  if ("mem0OpenaiApiKey" in body) {
+    if (body.mem0OpenaiApiKey === null || body.mem0OpenaiApiKey === "") {
+      patch.mem0OpenaiApiKey = null;
+    } else if (typeof body.mem0OpenaiApiKey === "string") {
+      patch.mem0OpenaiApiKey = body.mem0OpenaiApiKey.trim() || null;
+    }
+  }
+  if ("mem0OpenaiBaseUrl" in body) {
+    if (body.mem0OpenaiBaseUrl === null || body.mem0OpenaiBaseUrl === "") {
+      patch.mem0OpenaiBaseUrl = null;
+    } else if (typeof body.mem0OpenaiBaseUrl === "string") {
+      patch.mem0OpenaiBaseUrl = body.mem0OpenaiBaseUrl.trim() || null;
+    }
+  }
+  if ("mem0LlmModel" in body) {
+    if (body.mem0LlmModel === null || body.mem0LlmModel === "") {
+      patch.mem0LlmModel = null;
+    } else if (typeof body.mem0LlmModel === "string") {
+      patch.mem0LlmModel = body.mem0LlmModel.trim() || null;
+    }
+  }
+  if ("mem0EmbedModel" in body) {
+    if (body.mem0EmbedModel === null || body.mem0EmbedModel === "") {
+      patch.mem0EmbedModel = null;
+    } else if (typeof body.mem0EmbedModel === "string") {
+      patch.mem0EmbedModel = body.mem0EmbedModel.trim() || null;
+    }
+  }
   if (addCliAlwaysRaw) {
     const cur = await readGlobalSettings(cwd);
     const [bin] = normalizeCliAlwaysAllowList([addCliAlwaysRaw]);
@@ -151,7 +179,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json(
       {
         error:
-          "No valid fields (skillsFolderPath, chatModels, defaultChatModel, provider, providerBaseUrl, providerApiKey, modelProviders, defaultChatProvider, cliAlwaysAllowCommands, addCliAlwaysAllowCommand)",
+          "No valid fields (skillsFolderPath, chatModels, defaultChatModel, provider, providerBaseUrl, providerApiKey, modelProviders, defaultChatProvider, cliAlwaysAllowCommands, addCliAlwaysAllowCommand, mem0OpenaiApiKey, mem0OpenaiBaseUrl, mem0LlmModel, mem0EmbedModel)",
       },
       { status: 400 },
     );

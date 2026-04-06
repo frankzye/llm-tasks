@@ -22,6 +22,10 @@ import {
   readAgentConfig,
   sanitizeAgentId,
 } from "@/src/lib/agent/agent-store";
+import {
+  readTaskBoardState,
+  writeTaskBoardState,
+} from "@/src/lib/agent/task-board-store";
 import { autoCompactMessages } from "@/src/lib/agent/compaction";
 import {
   isCliCommandAllowlisted,
@@ -225,9 +229,15 @@ export async function runChatPost(body: ChatPostBody): Promise<Response> {
 
   const lastUserText = getLastUserMessageText(messages);
   let mem0Context = "";
-  if (lastUserText?.trim() && getMemoryForAgent(cwd, agentId)) {
+  if (lastUserText?.trim() && getMemoryForAgent(cwd, agentId, settings)) {
     try {
-      const hits = await searchMemoriesForAgent(cwd, agentId, lastUserText, 8);
+      const hits = await searchMemoriesForAgent(
+        cwd,
+        agentId,
+        lastUserText,
+        8,
+        settings,
+      );
       if (hits.length > 0) {
         mem0Context =
           "Relevant long-term memory (Mem0):\n" +
@@ -241,12 +251,12 @@ export async function runChatPost(body: ChatPostBody): Promise<Response> {
   const mergedSystem = [
     baseSystem,
     agentConfig.systemPrompt,
-    system,
-    mem0Context.trim() ? mem0Context : undefined,
-    compacted.systemAddendum,
+    system
   ]
     .filter(Boolean)
     .join("\n\n");
+
+  console.log("mergedSystem", mergedSystem);
 
   const dataDir = dataRootDir(cwd);
 
@@ -270,7 +280,7 @@ export async function runChatPost(body: ChatPostBody): Promise<Response> {
         { role: "assistant", content: assistantText.slice(0, 48_000) },
       ];
       try {
-        await addConversationToAgentMemory(cwd, agentId, pair);
+        await addConversationToAgentMemory(cwd, agentId, pair, settings);
       } catch (e) {
         console.error("[mem0] add conversation failed", e);
       }
@@ -290,6 +300,34 @@ export async function runChatPost(body: ChatPostBody): Promise<Response> {
               description: a.description?.trim() ?? "",
             })),
           };
+        },
+      }),
+      read_task_board: tool({
+        description:
+          "Read this agent's persisted todo/task list from disk (task-board.json). Call before update_task_board if you need current items.",
+        inputSchema: zodSchema(z.object({})),
+        execute: async () => {
+          const state = await readTaskBoardState(cwd, agentId);
+          return { tasks: state.tasks };
+        },
+      }),
+      update_task_board: tool({
+        description:
+          "Replace this agent's full todo/task list on disk. Each task needs a stable id, title, and done. To add a task, include a new id (e.g. UUID). To remove, omit it from the array.",
+        inputSchema: zodSchema(
+          z.object({
+            tasks: z.array(
+              z.object({
+                id: z.string(),
+                title: z.string(),
+                done: z.boolean(),
+              }),
+            ),
+          }),
+        ),
+        execute: async ({ tasks }) => {
+          await writeTaskBoardState(cwd, agentId, { tasks });
+          return { ok: true as const, taskCount: tasks.length };
         },
       }),
       find_skills: tool({
@@ -331,7 +369,7 @@ export async function runChatPost(body: ChatPostBody): Promise<Response> {
           const resourceHints = extractSkillResourceHints(s.body);
           return {
             id: s.id,
-            title: s.title,
+            title: "skill: " + s.title,
             tags: s.tags,
             skillMdPath,
             resourceHints,
@@ -365,6 +403,13 @@ export async function runChatPost(body: ChatPostBody): Promise<Response> {
             return { error: "Invalid relativePath" };
           }
           try {
+            const st = await fs.stat(/* turbopackIgnore: true */ full);
+            if (st.isDirectory()) {
+              return {
+                error:
+                  "relativePath points to a directory; pass a file path (e.g. scripts/search.py), not a folder.",
+              };
+            }
             const raw = await fs.readFile(/* turbopackIgnore: true */ full, "utf8");
             return {
               skillId,
@@ -372,6 +417,13 @@ export async function runChatPost(body: ChatPostBody): Promise<Response> {
               body: raw.slice(0, 48_000),
             };
           } catch (e) {
+            const code = e && typeof e === "object" && "code" in e ? (e as NodeJS.ErrnoException).code : "";
+            if (code === "EISDIR") {
+              return {
+                error:
+                  "relativePath points to a directory; pass a file path, not a folder.",
+              };
+            }
             return { error: `Failed to read resource: ${String(e)}` };
           }
         },
@@ -389,15 +441,15 @@ export async function runChatPost(body: ChatPostBody): Promise<Response> {
           }),
         ),
         execute: async ({ content }) => {
-          if (!getMemoryForAgent(cwd, agentId)) {
+          if (!getMemoryForAgent(cwd, agentId, settings)) {
             return {
               ok: false as const,
               error:
-                "Mem0 requires OPENAI_API_KEY (and MEM0_ENABLED not false).",
+                "Mem0 requires an API key (Settings → Mem0 or OPENAI_API_KEY) and MEM0_ENABLED not false.",
             };
           }
           try {
-            await addExplicitMemory(cwd, agentId, content);
+            await addExplicitMemory(cwd, agentId, content, settings);
             return { ok: true as const };
           } catch (e) {
             return { ok: false as const, error: String(e) };
@@ -414,7 +466,7 @@ export async function runChatPost(body: ChatPostBody): Promise<Response> {
           }),
         ),
         execute: async ({ query, limit }) => {
-          if (!getMemoryForAgent(cwd, agentId)) {
+          if (!getMemoryForAgent(cwd, agentId, settings)) {
             return { entries: [] as { key: string; value: string; updatedAt: string }[] };
           }
           try {
@@ -423,6 +475,7 @@ export async function runChatPost(body: ChatPostBody): Promise<Response> {
               agentId,
               query,
               limit ?? 8,
+              settings,
             );
             return {
               entries: rows.map((r, i) => ({

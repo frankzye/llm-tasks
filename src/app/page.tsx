@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  AssistantRuntimeProvider,
-  Interactables,
-  useAui,
-} from "@assistant-ui/react";
+import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -16,21 +12,16 @@ import { Thread } from "@/src/components/assistant-ui/thread";
 import { AgentChatTransport } from "@/src/lib/agent-chat-transport";
 import { ToolApprovalResponseContext } from "@/src/lib/tool-approval-response-context";
 import { useAgentChatRuntime } from "@/src/lib/use-agent-chat-runtime";
-import { lastAssistantMessageIsCompleteWithToolCalls } from "ai";
 
 function ChatShell() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const transport = useMemo(() => new AgentChatTransport(), []);
   const { runtime, addToolApprovalResponse } = useAgentChatRuntime({
     transport,
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-  });
-  const aui = useAui({
-    interactables: Interactables(),
   });
 
   return (
-    <AssistantRuntimeProvider runtime={runtime} aui={aui}>
+    <AssistantRuntimeProvider runtime={runtime}>
       <ToolApprovalResponseContext.Provider value={addToolApprovalResponse}>
         <A2ASendTool />
         <AgentThreadBootstrap />

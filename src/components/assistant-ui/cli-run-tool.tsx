@@ -5,8 +5,12 @@ import {
   type ToolCallMessagePartProps,
 } from "@assistant-ui/react";
 import { BookmarkPlus, Check, Loader2, TerminalSquare, X } from "lucide-react";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useToolApprovalResponse } from "@/src/lib/tool-approval-response-context";
+import {
+  getToolApprovalIdForCall,
+  subscribeToolApprovalIndex,
+} from "@/src/lib/tool-approval-index-store";
 
 function normalizeTerminalText(text: string): string {
   let normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -75,22 +79,47 @@ function extractCommand(args: unknown, argsText?: string): string | null {
   }
 }
 
+/** assistant-ui passes `interrupt` from the AI SDK converter; frontend-tool path may nest payload. */
+function approvalIdFromInterrupt(
+  interrupt: { type: "human"; payload: unknown } | undefined,
+): string | undefined {
+  if (!interrupt || interrupt.type !== "human") return undefined;
+  const p = interrupt.payload;
+  if (p && typeof p === "object" && p !== null) {
+    const rec = p as Record<string, unknown>;
+    if (typeof rec.id === "string") return rec.id;
+    if (
+      rec.type === "human" &&
+      rec.payload &&
+      typeof rec.payload === "object" &&
+      rec.payload !== null &&
+      "id" in rec.payload &&
+      typeof (rec.payload as { id: unknown }).id === "string"
+    ) {
+      return (rec.payload as { id: string }).id;
+    }
+  }
+  return undefined;
+}
+
 export const CliRunTool: ToolCallMessagePartComponent = (
   props: ToolCallMessagePartProps,
 ) => {
-  const { args, argsText, result, status, resume, interrupt } = props;
+  const { args, argsText, result, status, resume, interrupt, toolCallId } = props;
   const addToolApprovalResponse = useToolApprovalResponse();
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [savingAlwaysRun, setSavingAlwaysRun] = useState(false);
 
+  const approvalIdFromMessages = useSyncExternalStore(
+    subscribeToolApprovalIndex,
+    () => getToolApprovalIdForCall(toolCallId),
+    () => undefined,
+  );
+
+  console.log(props);
+
   const approvalId =
-    interrupt?.type === "human" &&
-      interrupt.payload &&
-      typeof interrupt.payload === "object" &&
-      "id" in interrupt.payload &&
-      typeof interrupt.payload.id === "string"
-      ? interrupt.payload.id
-      : undefined;
+    approvalIdFromInterrupt(interrupt) ?? approvalIdFromMessages;
 
   const command = extractCommand(args, argsText);
   const hasCommand = Boolean(command?.trim());

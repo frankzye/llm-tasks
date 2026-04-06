@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AgentChatTransport } from "./agent-chat-transport";
 import { createAgentsThreadListAdapter } from "./agent-thread-list-adapter";
+import { syncToolApprovalIndexFromMessages } from "./tool-approval-index-store";
 
 type AISDKRuntimeAdapterArg = NonNullable<Parameters<typeof useAISDKRuntime>[1]>;
 
@@ -99,6 +100,10 @@ function useChatThreadRuntimeBody<UI_MESSAGE extends UIMessage>(
 
   const { messages, setMessages, addToolApprovalResponse } = chat;
   messagesRef.current = messages as UI_MESSAGE[];
+
+  useEffect(() => {
+    syncToolApprovalIndexFromMessages(messages as UIMessage[]);
+  }, [messages]);
 
   useEffect(() => {
     if (!onAddToolApprovalResponse) return;

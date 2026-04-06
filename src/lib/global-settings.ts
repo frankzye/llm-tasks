@@ -18,6 +18,9 @@ export type ModelProviderConfig = {
 export type GlobalSettings = {
   skillsGitUrl?: string;
   skillsGitLastSyncedAt?: string;
+  /** Last zip URL used for skills install from URL. */
+  skillsZipUrl?: string;
+  skillsZipLastImportedAt?: string;
   /** Absolute path on the server; markdown under this tree is merged at chat time. */
   skillsFolderPath?: string | null;
   /** Allowed chat model ids shown in UI + accepted by API. */
@@ -39,6 +42,22 @@ export type GlobalSettings = {
    * Managed from the chat CLI Run tool UI ("always allow").
    */
   cliAlwaysAllowCommands?: string[];
+  /**
+   * Mem0 long-term memory: OpenAI-compatible API key (overrides `OPENAI_API_KEY` when set).
+   */
+  mem0OpenaiApiKey?: string | null;
+  /**
+   * Mem0: API base URL for embedder + LLM (overrides `OPENAI_BASE_URL`).
+   */
+  mem0OpenaiBaseUrl?: string | null;
+  /**
+   * Mem0 internal LLM model id (overrides `MEM0_LLM_MODEL`).
+   */
+  mem0LlmModel?: string | null;
+  /**
+   * Mem0 embedding model id (overrides `MEM0_EMBED_MODEL`).
+   */
+  mem0EmbedModel?: string | null;
 };
 
 export function globalSettingsFilePath(cwd: string): string {
@@ -55,6 +74,10 @@ export async function readGlobalSettings(cwd: string): Promise<GlobalSettings> {
     if (typeof o.skillsGitUrl === "string") out.skillsGitUrl = o.skillsGitUrl;
     if (typeof o.skillsGitLastSyncedAt === "string") {
       out.skillsGitLastSyncedAt = o.skillsGitLastSyncedAt;
+    }
+    if (typeof o.skillsZipUrl === "string") out.skillsZipUrl = o.skillsZipUrl;
+    if (typeof o.skillsZipLastImportedAt === "string") {
+      out.skillsZipLastImportedAt = o.skillsZipLastImportedAt;
     }
     if (o.skillsFolderPath === null || typeof o.skillsFolderPath === "string") {
       out.skillsFolderPath = o.skillsFolderPath;
@@ -122,6 +145,30 @@ export async function readGlobalSettings(cwd: string): Promise<GlobalSettings> {
         (x): x is string => typeof x === "string",
       );
       out.cliAlwaysAllowCommands = normalizeCliAlwaysAllowList(cmds);
+    }
+    if (o.mem0OpenaiApiKey === null || typeof o.mem0OpenaiApiKey === "string") {
+      out.mem0OpenaiApiKey =
+        typeof o.mem0OpenaiApiKey === "string"
+          ? o.mem0OpenaiApiKey.trim() || null
+          : null;
+    }
+    if (o.mem0OpenaiBaseUrl === null || typeof o.mem0OpenaiBaseUrl === "string") {
+      out.mem0OpenaiBaseUrl =
+        typeof o.mem0OpenaiBaseUrl === "string"
+          ? o.mem0OpenaiBaseUrl.trim() || null
+          : null;
+    }
+    if (o.mem0LlmModel === null || typeof o.mem0LlmModel === "string") {
+      out.mem0LlmModel =
+        typeof o.mem0LlmModel === "string"
+          ? o.mem0LlmModel.trim() || null
+          : null;
+    }
+    if (o.mem0EmbedModel === null || typeof o.mem0EmbedModel === "string") {
+      out.mem0EmbedModel =
+        typeof o.mem0EmbedModel === "string"
+          ? o.mem0EmbedModel.trim() || null
+          : null;
     }
     if (!out.modelProviders || out.modelProviders.length === 0) {
       const kind = out.provider ?? "openai";
